@@ -1,0 +1,12 @@
+{
+    "minDistSq": 0.05,
+    "passes": 2,
+    "colinearThreshold": 0.007,
+    "maxSegmentLenSq": 9.0,
+
+    "zProfileType": "sin",
+    "zMin": 0.0,
+    "zMax": 1.0,
+    "zCtrl1": 1.0,
+    "zCtrl2": 1.0
+}

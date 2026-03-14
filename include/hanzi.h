@@ -1,0 +1,77 @@
+#ifndef HANZI_H
+#define HANZI_H
+
+#include <string>
+#include <vector>
+#include<iostream>
+#include<fstream>
+#include<map>
+#include<iomanip>
+#include<cmath>
+
+#ifdef _WIN32
+    //#include<windows.h>
+#endif
+
+#include"../include/json.hpp"
+
+using namespace std;
+using json=nlohmann::json;
+
+class hanzi {
+private:
+    struct Point{
+        double x,y,z;
+    };
+    struct Bi_Hua{
+        std::vector<Point>p;
+        string type;
+    };
+    struct HanZi{
+        vector<Bi_Hua>bi_hua_;
+    };
+
+    struct SmoothConfig {
+        double minDistSq = 0.25;
+        int passes = 2;
+        double colinearThreshold = 0.007;
+        double maxSegmentLenSq = 9.0;
+
+        // Z 轴控制参数（0..1）
+        string zProfileType = "bezier"; // "sin" 或 "bezier"
+        double zMin = 0.0;
+        double zMax = 1.0;
+        double zCtrl1 = 1.0; // only used for bezier
+        double zCtrl2 = 1.0; // only used for bezier
+    } smoothCfg;
+
+    double scale=1.0;
+    map<string,HanZi>mp;
+
+    // Lazy-load character data from ./hanzi_data/<char>.json on demand.
+    bool loadCharData(const string& ch);
+    const HanZi* getHanZi(const string& ch);
+
+    void addPoint(Bi_Hua& stroke,double rol=10.0);//插值系数，越大插值越多
+    void applyZProfile(Bi_Hua& stroke); // 生成 Z 轴轻重起伏（0~1）
+    static string inferStrokeType(const Bi_Hua& stroke); // 识别笔画类型（如:h/sh/p/n）
+    void smooth(Bi_Hua& stroke);//滤波平滑
+public:
+    //初始构造函数
+    explicit hanzi();
+
+    void printGCode(string name,            // 要写的汉字（可包含多个字符）
+                double Rate,               // 速度
+                double x,double y,        // 相对零点绝对坐标
+                double z_up,double z_down,// 起笔落笔深度
+                int n=1, int m=1,         // 行/列，最多写 n*m 个字
+                double Size=100.0,        // 每个字占用的正方形边长（mm）
+                bool rowMajor=true,       // true: 以行优先写，false: 以列优先写
+                string path="./G.gcode"); // 输出文件
+    void printAllWord();
+    void printSingleWord(string name);
+};
+
+
+
+#endif // HANZI_H
