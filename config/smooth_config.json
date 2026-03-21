@@ -1,5 +1,5 @@
 {
-    "minDistSq": 0.05,
+    "minDistSq": 0.5,
     "passes": 2,
     "colinearThreshold": 0.007,
     "maxSegmentLenSq": 9.0,

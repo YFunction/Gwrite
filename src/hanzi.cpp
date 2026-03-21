@@ -202,7 +202,8 @@ void hanzi::printGCode(string name,
                 z = z_up + (z_down - z_up) * bh.p[i].z;
                 gout<<"G1 X"<<x<<" Y"<<y<<" Z"<<z<<"\n";
             }
-            gout<<"G0 Z"<<z_up<<"\n\n";
+            gout<<"G0 Z"<<z_up<<"\n";
+            gout<<"G0 Z"<<z_up+30<<"\n\n";
         }
     }
     gout<<"G0 Z"<<z_up<<"\n";
