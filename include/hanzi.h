@@ -43,6 +43,13 @@ private:
         double zMax = 1.0;
         double zCtrl1 = 1.0; // only used for bezier
         double zCtrl2 = 1.0; // only used for bezier
+
+        double backRatio = 0.12;      // 回笔长度比例
+        double backMinLen = 1.0;      // 最小回笔长度 (mm)
+        double backMaxLen = 5.0;      // 最大回笔长度 (mm)
+
+        int fadeInPointCount = 0;       // 渐入点数（0 表示禁用）
+        double fadeInLength = 0.0;      // 渐入长度（mm，优先于点数，0 表示使用点数）
     } smoothCfg;
 
     double scale=1.0;

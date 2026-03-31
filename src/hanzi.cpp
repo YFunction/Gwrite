@@ -4,6 +4,7 @@
 #include<iomanip>
 #include<cmath>
 #include<filesystem>
+#include<tuple>
 
 #ifdef _WIN32
     //#include<windows.h>
@@ -17,18 +18,10 @@ using json=nlohmann::json;
 
 hanzi::hanzi(){
     // 读取平滑滤波配置
-    // 1) minDistSq：去除近似重复点的最小距离的平方
-    //    值越大，去掉的点越多（更平滑，但细节减少）
-    // 2) passes：移动平均滤波的迭代次数
-    //    次数越多，曲线越圆滑（更明显的低通滤波效果）
-    // 3) colinearThreshold：判定共线的阈值（sin(theta)）
-    //    值越大，越多点会被认为共线而删除
-    // 4) maxSegmentLenSq：在去除共线点时，仅处理更短的线段
-    //    避免将长直线段上的点误删。
-    
     try {
-        ifstream cfgF("./smooth_config.json");
+        ifstream cfgF("./config/smooth_config.json");
         if(cfgF.is_open()){
+            cout<<"OK"<<endl;
             json cfg;
             cfgF >> cfg;
             if(cfg.contains("minDistSq")) smoothCfg.minDistSq = cfg["minDistSq"].get<double>();
@@ -41,13 +34,21 @@ hanzi::hanzi(){
             if(cfg.contains("zMax")) smoothCfg.zMax = cfg["zMax"].get<double>();
             if(cfg.contains("zCtrl1")) smoothCfg.zCtrl1 = cfg["zCtrl1"].get<double>();
             if(cfg.contains("zCtrl2")) smoothCfg.zCtrl2 = cfg["zCtrl2"].get<double>();
+
+            if(cfg.contains("backRatio")) smoothCfg.backRatio = cfg["backRatio"].get<double>();
+            if(cfg.contains("backMinLen")) smoothCfg.backMinLen = cfg["backMinLen"].get<double>();
+            if(cfg.contains("backMaxLen")) smoothCfg.backMaxLen = cfg["backMaxLen"].get<double>();
+        
+            if(cfg.contains("fadeInPointCount")) smoothCfg.fadeInPointCount = cfg["fadeInPointCount"].get<int>();
+            if(cfg.contains("fadeInLength")) smoothCfg.fadeInLength = cfg["fadeInLength"].get<double>();
+            
+            cout<<smoothCfg.backRatio<<endl<<smoothCfg.backMinLen<<endl<<smoothCfg.backMaxLen<<endl<<smoothCfg.fadeInPointCount<<endl;
+
         }
     } catch(const std::exception& e) {
         cerr << "Warning: failed to load smooth_config.json (using defaults): " << e.what() << '\n';
     }
 
-    // Data is loaded lazily per character to avoid parsing a large all.json at startup.
-    // Individual character strokes are stored as ./hanzi_data/<char>.json.
     return;
 };
 
@@ -189,21 +190,156 @@ void hanzi::printGCode(string name,
         double xOffset = -minX * scaleForChar;
         double yOffset = -minY * scaleForChar;
 
-        for(const auto& bh: hz->bi_hua_){
-            const auto& firstPoint = bh.p.front();
-            double x = xOrigin + (firstPoint.x * scaleForChar + xOffset);
-            double y = yOrigin + (firstPoint.y * scaleForChar + yOffset);
-            double z = z_up + (z_down - z_up) * firstPoint.z;
-            gout<<"G0 X"<<x<<" Y"<<y<<"\n";
-            gout<<"G1 X"<<x<<" Y"<<y<<" Z"<<z<<" F"<<Rate<<"\n";
-            for(int i=1;i<bh.p.size();i++){
-                x = xOrigin + (bh.p[i].x * scaleForChar + xOffset);
-                y = yOrigin + (bh.p[i].y * scaleForChar + yOffset);
-                z = z_up + (z_down - z_up) * bh.p[i].z;
-                gout<<"G1 X"<<x<<" Y"<<y<<" Z"<<z<<"\n";
+        // for(const auto& bh: hz->bi_hua_){
+        //     const auto& firstPoint = bh.p.front();
+        //     double x = xOrigin + (firstPoint.x * scaleForChar + xOffset);
+        //     double y = yOrigin + (firstPoint.y * scaleForChar + yOffset);
+        //     double z = z_up + (z_down - z_up) * firstPoint.z;
+        //     gout<<"G0 X"<<x<<" Y"<<y<<"\n";
+        //     gout<<"G1 X"<<x<<" Y"<<y<<" Z"<<z<<" F"<<Rate<<"\n";
+        //     for(int i=1;i<bh.p.size();i++){
+        //         x = xOrigin + (bh.p[i].x * scaleForChar + xOffset);
+        //         y = yOrigin + (bh.p[i].y * scaleForChar + yOffset);
+        //         z = z_up + (z_down - z_up) * bh.p[i].z;
+        //         gout<<"G1 X"<<x<<" Y"<<y<<" Z"<<z<<"\n";
+        //     }
+        //     gout<<"G0 Z"<<z_up<<"\n";
+        //     gout<<"G0 Z"<<z_up+30<<"\n\n";
+        // }
+        for (const auto& bh : hz->bi_hua_) {
+            const auto& pts = bh.p;
+            if (pts.empty()) continue;
+
+            vector<Point> absPoints;   // Point 是 hanzi 类内定义的结构体，可直接使用
+            for (size_t i = 0; i < pts.size(); ++i) {
+                double x = xOrigin + (pts[i].x * scaleForChar + xOffset);
+                double y = yOrigin + (pts[i].y * scaleForChar + yOffset);
+                double z = z_up + (z_down - z_up) * pts[i].z;
+                absPoints.push_back({x, y, z});
             }
-            gout<<"G0 Z"<<z_up<<"\n";
-            gout<<"G0 Z"<<z_up+30<<"\n\n";
+
+            // ---- 步骤2：渐入处理（覆盖前几个点的 Z） ----
+            int fadeCount = smoothCfg.fadeInPointCount;
+            cout<<fadeCount<<endl;
+            if (smoothCfg.fadeInLength > 0.0) {
+                // 按长度计算渐入点数
+                double cumLen = 0.0;
+                fadeCount = 0;
+                for (size_t i = 1; i < absPoints.size() && cumLen < smoothCfg.fadeInLength; ++i) {
+                    double dx = absPoints[i].x - absPoints[i-1].x;
+                    double dy = absPoints[i].y - absPoints[i-1].y;
+                    cumLen += sqrt(dx*dx + dy*dy);
+                    fadeCount = i;
+                }
+                if (cumLen < smoothCfg.fadeInLength && absPoints.size() > 0) fadeCount = absPoints.size() - 1;
+            }
+
+            if (fadeCount > 0) {
+                        cout<<"changed"<<endl;
+                int endIdx = min(fadeCount, (int)absPoints.size() - 1);
+                // 计算前 endIdx 个点的累积距离（物理距离）
+                vector<double> dist(endIdx + 1, 0.0);
+                for (int i = 1; i <= endIdx; ++i) {
+                    double dx = absPoints[i].x - absPoints[i-1].x;
+                    double dy = absPoints[i].y - absPoints[i-1].y;
+                    dist[i] = dist[i-1] + sqrt(dx*dx + dy*dy);
+                }
+                double totalDist = dist[endIdx];
+                if (totalDist > 1e-6) {
+                    for (int i = 0; i <= endIdx; ++i) {
+                        double t = dist[i] / totalDist;
+                        double newZ = z_up + (absPoints[i].z - z_up) * t;
+                        absPoints[i].z = newZ;
+                    }
+                }
+            }
+
+            // ---- 步骤3：将修改后的 absPoints 放入 drawPoints ----
+            vector<tuple<double, double, double>> drawPoints;
+            for (const auto& p : absPoints) {
+                drawPoints.emplace_back(p.x, p.y, p.z);
+            }
+            std::cout<<bh.type<<std::endl;
+            // ---- 回笔处理（仅对横 "h" 和竖 "sh"） ----
+            if (bh.type == "h" || bh.type == "sh") {
+                size_t n = pts.size();
+                if (n >= 3) {
+                    // 计算原始坐标中的累积距离
+                    vector<double> origDist(n, 0.0);
+                    for (size_t i = 1; i < n; ++i) {
+                        double dx = pts[i].x - pts[i-1].x;
+                        double dy = pts[i].y - pts[i-1].y;
+                        origDist[i] = origDist[i-1] + sqrt(dx*dx + dy*dy);
+                    }
+                    double origTotalLen = origDist.back();
+
+                    double physTotalLen = origTotalLen * scaleForChar;
+                    const double backRatio = smoothCfg.backRatio;
+                    const double minBackLen = smoothCfg.backMinLen;
+                    const double maxBackLen = smoothCfg.backMaxLen;
+                    double backPhysLen = physTotalLen * backRatio;
+                    backPhysLen = min(max(backPhysLen, minBackLen), maxBackLen);
+                    double backOrigLen = backPhysLen / scaleForChar;
+
+                    int startIdx = -1;
+                    for (int i = n-1; i >= 0; --i) {
+                        if (origTotalLen - origDist[i] >= backOrigLen) {
+                            startIdx = i;
+                            break;
+                        }
+                    }
+                    if (startIdx < 0) startIdx = 0;
+                    if (startIdx >= n-1) startIdx = n-2;
+
+                    // 收集逆序回笔点（不含原末尾点）
+                    vector<Point> backPts;
+                    for (int i = n-2; i >= startIdx; --i) {
+                        backPts.push_back(pts[i]);
+                    }
+
+                    if (!backPts.empty()) {
+                        // 回笔轨迹的累积距离
+                        vector<double> backDist(backPts.size(), 0.0);
+                        double dx0 = backPts[0].x - pts.back().x;
+                        double dy0 = backPts[0].y - pts.back().y;
+                        backDist[0] = sqrt(dx0*dx0 + dy0*dy0);
+                        for (size_t i = 1; i < backPts.size(); ++i) {
+                            double dx = backPts[i].x - backPts[i-1].x;
+                            double dy = backPts[i].y - backPts[i-1].y;
+                            backDist[i] = backDist[i-1] + sqrt(dx*dx + dy*dy);
+                        }
+                        double backTotalLen = backDist.back();
+
+                        double startZNorm = pts.back().z;
+                        double endZNorm = 0.0;
+
+                        for (size_t i = 0; i < backPts.size(); ++i) {
+                            double t = (backTotalLen > 1e-6) ? (backDist[i] / backTotalLen) : 0.0;
+                            double zNorm = startZNorm * (1.0 - t) + endZNorm * t;
+                            double x = xOrigin + (backPts[i].x * scaleForChar + xOffset);
+                            double y = yOrigin + (backPts[i].y * scaleForChar + yOffset);
+                            double z = z_up + (z_down - z_up) * zNorm;
+                            cout<<"added"<<x<<","<<y<<","<<z<<endl;
+                            drawPoints.emplace_back(x, y, z);
+                        }
+                    }
+                }
+            }
+
+            // ---- 输出当前笔画（含回笔）的 G 代码 ----
+            if (drawPoints.empty()) continue;
+
+            auto [x0, y0, z0] = drawPoints[0];
+            gout << "G0 X" << x0 << " Y" << y0 << "\n";
+            gout << "G1 X" << x0 << " Y" << y0 << " Z" << z0 << " F" << Rate << "\n";
+
+            for (size_t i = 1; i < drawPoints.size(); ++i) {
+                auto [x, y, z] = drawPoints[i];
+                gout << "G1 X" << x << " Y" << y << " Z" << z << "\n";
+            }
+
+            gout << "G0 Z" << z_up << "\n";
+            gout << "G0 Z" << z_up + 30 << "\n\n";
         }
     }
     gout<<"G0 Z"<<z_up<<"\n";
@@ -299,7 +435,7 @@ void hanzi::addPoint(Bi_Hua& stroke,double role){
             Point p0=(i==0)?points[i]:points[i-1];
             Point p1=points[i];
             Point p2=points[i+1];
-            Point p3=(i==n-1)?points[i+1]:points[i+2];
+            Point p3=(i+2<n)?points[i+2]:points[i+1];
             double step=1.0/(nums+1);
             for(double t=0.0;t<1.0;t+=step){
                 newP.push_back(F(p0,p1,p2,p3,t));
@@ -311,42 +447,136 @@ void hanzi::addPoint(Bi_Hua& stroke,double role){
     return;
 }
 
-void hanzi::applyZProfile(Bi_Hua& stroke){
+void hanzi::applyZProfile(Bi_Hua& stroke) {
     auto& pts = stroke.p;
-    if(pts.size() < 2) return;
+    if (pts.size() < 2) return;
 
-    // 计算路径长度和每点归一化 t
+    // ---------- 1. 计算弧长和归一化参数 t ----------
     vector<double> dist(pts.size(), 0.0);
-    for(size_t i = 1; i < pts.size(); ++i){
-        double dx = pts[i].x - pts[i-1].x;
-        double dy = pts[i].y - pts[i-1].y;
-        dist[i] = dist[i-1] + sqrt(dx*dx + dy*dy);
+    for (size_t i = 1; i < pts.size(); ++i) {
+        double dx = pts[i].x - pts[i - 1].x;
+        double dy = pts[i].y - pts[i - 1].y;
+        dist[i] = dist[i - 1] + sqrt(dx * dx + dy * dy);
     }
-    double total = dist.back();
-    if(total <= 1e-9){
-        for(auto& p : pts) p.z = smoothCfg.zMin;
+    double totalLen = dist.back();
+    if (totalLen < 1e-9) {
+        for (auto& p : pts) p.z = smoothCfg.zMin;
         return;
     }
 
-    auto evalZ = [&](double t){
-        // 先计算归一化的曲线值 base（0..1），再映射到 [zMin,zMax]
-        double base = 0.0;
-        if(smoothCfg.zProfileType == "bezier"){
-            // 从 0 到 0 的三次贝塞尔曲线，控制点决定中间峰值：
-            //   B(t) = (1-t)^3*0 + 3(1-t)^2 t*c1 + 3(1-t) t^2*c2 + t^3*0
-            double u = 1.0 - t;
-            base = 3*u*u*t*smoothCfg.zCtrl1 + 3*u*t*t*smoothCfg.zCtrl2;
-        } else {
-            // 默认 sin 曲线（start/end 0，中间 1）
-            base = sin(M_PI * t);
+    // ---------- 2. 计算每个点的方向角和角度变化 ----------
+    vector<double> theta(pts.size(), 0.0);
+    for (size_t i = 1; i < pts.size(); ++i) {
+        double dx = pts[i].x - pts[i - 1].x;
+        double dy = pts[i].y - pts[i - 1].y;
+        theta[i] = atan2(dy, dx);
+    }
+    // 首点方向用第一段方向代替
+    theta[0] = theta[1];
+
+    vector<double> angleChange(pts.size(), 0.0);
+    for (size_t i = 1; i < pts.size() - 1; ++i) {
+        double delta = theta[i + 1] - theta[i];
+        // 归一化到 [-π, π]
+        delta = fmod(delta + M_PI, 2 * M_PI) - M_PI;
+        angleChange[i] = fabs(delta);
+    }
+
+    // ---------- 3. 识别整体方向（首尾点方向） ----------
+    double dxTotal = pts.back().x - pts.front().x;
+    double dyTotal = pts.back().y - pts.front().y;
+    double thetaTotal = atan2(dyTotal, dxTotal);
+
+    // ---------- 4. 定义基础曲线形状（基于整体方向） ----------
+    auto baseCurve = [&](double t) -> double {
+        // t 从 0 到 1
+        const double eps = 1e-6;
+        if (totalLen < 20.0) {   // 短笔画（如点）
+            // 中间重，两端轻：使用 sin(π * t) 曲线
+            return sin(M_PI * t);
         }
 
-        return smoothCfg.zMin + (smoothCfg.zMax - smoothCfg.zMin) * base;
+        // 根据整体方向选择曲线形态
+        double absTheta = fabs(thetaTotal);
+        // 横 / 竖（两端重，中间轻）：1 - sin(π * t) 再调整范围
+        if (absTheta < M_PI / 6 || fabs(M_PI - absTheta) < M_PI / 6) {
+            // 横或提
+            double val = 1.0 - sin(M_PI * t);
+            // 映射到 [0.2, 0.9] 范围，避免笔尖完全离纸
+            return 0.2 + 0.7 * val;
+        }
+        if (fabs(absTheta - M_PI / 2) < M_PI / 6) {
+            // 竖
+            double val = 1.0 - sin(M_PI * t);
+            return 0.2 + 0.7 * val;
+        }
+        if (thetaTotal > M_PI / 2 && thetaTotal < M_PI) {
+            // 撇（中间重）
+            double val = sin(M_PI * t);
+            return 0.2 + 0.8 * val;
+        }
+        if (thetaTotal > -M_PI / 2 && thetaTotal < 0) {
+            // 捺（中间重）
+            double val = sin(M_PI * t);
+            return 0.2 + 0.8 * val;
+        }
+        // 默认：中间重
+        double val = sin(M_PI * t);
+        return 0.2 + 0.8 * val;
     };
 
-    for(size_t i = 0; i < pts.size(); ++i){
-        double t = dist[i] / total;
-        pts[i].z = evalZ(t);
+    // ---------- 5. 生成基础 Z 值 ----------
+    vector<double> zVals(pts.size());
+    for (size_t i = 0; i < pts.size(); ++i) {
+        double t = dist[i] / totalLen;
+        zVals[i] = baseCurve(t);
+    }
+
+    // ---------- 6. 转折点增强 ----------
+    const double ANGLE_THRESH = 0.8;      // 弧度，约 45°
+    const int ENHANCE_RADIUS = 2;         // 影响半径（点数）
+    const double ENHANCE_AMOUNT = 0.3;    // 增强量（归一化值，0~1）
+    for (size_t i = 1; i + 1 < pts.size(); ++i) {
+        if (angleChange[i] > ANGLE_THRESH) {
+            int start = max(0, (int)i - ENHANCE_RADIUS);
+            int end = min((int)pts.size() - 1, (int)i + ENHANCE_RADIUS);
+            for (int j = start; j <= end; ++j) {
+                double factor = 1.0 - fabs(j - (int)i) / ENHANCE_RADIUS;
+                zVals[j] += ENHANCE_AMOUNT * factor;
+                zVals[j] = max(0.0, min(1.0, zVals[j]));
+            }
+        }
+    }
+
+    // ---------- 7. 末端钩增强 ----------
+    if (pts.size() >= 3) {
+        int last = pts.size() - 1;
+        double dxLast = pts[last].x - pts[last - 1].x;
+        double dyLast = pts[last].y - pts[last - 1].y;
+        double lenLast = sqrt(dxLast * dxLast + dyLast * dyLast);
+        if (lenLast < totalLen / 5.0) {
+            // 最后一段较短，检查方向变化
+            double dxPrev = pts[last - 1].x - pts[last - 2].x;
+            double dyPrev = pts[last - 1].y - pts[last - 2].y;
+            double thetaPrev = atan2(dyPrev, dxPrev);
+            double thetaLast = atan2(dyLast, dxLast);
+            double delta = fmod(thetaLast - thetaPrev + M_PI, 2 * M_PI) - M_PI;
+            if (fabs(delta) > 60.0 * M_PI / 180.0) {
+                // 钩：末端增加下压
+                int start = max(0, last - 3);
+                for (int j = start; j <= last; ++j) {
+                    double factor = 1.0 - (last - j) / 3.0;
+                    zVals[j] += 0.3 * factor;
+                    zVals[j] = min(1.0, zVals[j]);
+                }
+            }
+        }
+    }
+
+    // ---------- 8. 写回点集，并映射到 [zMin, zMax] ----------
+    for (size_t i = 0; i < pts.size(); ++i) {
+        double zNorm = max(0.0, min(1.0, zVals[i]));
+        pts[i].z = smoothCfg.zMin + (smoothCfg.zMax - smoothCfg.zMin) * zNorm;
     }
 }
 
