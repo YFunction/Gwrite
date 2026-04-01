@@ -63,6 +63,8 @@ private:
     void applyZProfile(Bi_Hua& stroke); // 生成 Z 轴轻重起伏（0~1）
     static string inferStrokeType(const Bi_Hua& stroke); // 识别笔画类型（如:h/sh/p/n）
     void smooth(Bi_Hua& stroke);//滤波平滑
+    void extendStrokeEnd(Bi_Hua& stroke, double length, int numPoints = 3);
+    
 public:
     //初始构造函数
     explicit hanzi();

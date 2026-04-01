@@ -1,3 +1,26 @@
+// 在笔画末端延长若干点
+void hanzi::extendStrokeEnd(Bi_Hua& stroke, double length, int numPoints) {
+    if (stroke.p.size() < 2 || length <= 0 || numPoints < 1) return;
+    // 用值拷贝，避免push_back后引用失效
+    auto last = stroke.p.back();
+    const auto& prev = stroke.p[stroke.p.size() - 2];
+    double dx = last.x - prev.x;
+    double dy = last.y - prev.y;
+    double dz = last.z - prev.z;
+    double norm = sqrt(dx*dx + dy*dy);
+    if (norm < 1e-8) return;
+    double ux = dx / norm;
+    double uy = dy / norm;
+    // double uz = dz / norm; // 通常z方向不延长
+    double step = length / numPoints;
+    for (int i = 1; i <= numPoints; ++i) {
+        last.x += ux * step;
+        last.y += uy * step;
+        // last.z += uz * step; // 通常z不延长
+        stroke.p.push_back({last.x, last.y, last.z});
+        cout<<"added"<< "("<<last.x<<","<<last.y<<","<<last.z<<")\n";
+    }
+}
 #include<iostream>
 #include<fstream>
 #include<map>
@@ -206,11 +229,14 @@ void hanzi::printGCode(string name,
         //     gout<<"G0 Z"<<z_up<<"\n";
         //     gout<<"G0 Z"<<z_up+30<<"\n\n";
         // }
-        for (const auto& bh : hz->bi_hua_) {
+
+        for (auto bh : hz->bi_hua_) { // 注意这里要用auto bh副本，避免影响原始数据
+            // 1. 延长笔画末端
+            extendStrokeEnd(bh, 100.0, bh.p.size()/10); // 可调整参数：延长20单位，3个点
             const auto& pts = bh.p;
             if (pts.empty()) continue;
 
-            vector<Point> absPoints;   // Point 是 hanzi 类内定义的结构体，可直接使用
+            vector<Point> absPoints;
             for (size_t i = 0; i < pts.size(); ++i) {
                 double x = xOrigin + (pts[i].x * scaleForChar + xOffset);
                 double y = yOrigin + (pts[i].y * scaleForChar + yOffset);
@@ -313,13 +339,16 @@ void hanzi::printGCode(string name,
                         double startZNorm = pts.back().z;
                         double endZNorm = 0.0;
 
+                        double startZ = z_down;               // 回笔起点高度
+                        double endZ = z_up * 0.3;       // 回笔终点高度
+
                         for (size_t i = 0; i < backPts.size(); ++i) {
                             double t = (backTotalLen > 1e-6) ? (backDist[i] / backTotalLen) : 0.0;
                             double zNorm = startZNorm * (1.0 - t) + endZNorm * t;
                             double x = xOrigin + (backPts[i].x * scaleForChar + xOffset);
                             double y = yOrigin + (backPts[i].y * scaleForChar + yOffset);
-                            double z = z_up + (z_down - z_up) * zNorm;
-                            cout<<"added"<<x<<","<<y<<","<<z<<endl;
+                            double z = startZ * (1.0 -t) + endZ * t;   // 线性插值
+                            //cout<<"added"<<x<<","<<y<<","<<z<<endl;
                             drawPoints.emplace_back(x, y, z);
                         }
                     }

@@ -9,8 +9,8 @@ int main(){
     string write;
     cin>>write;
     hanzi a;
-    a.printGCode(write, 3000.0, -40, 200, -5, -10, 4, 1, 60.0, false);
-    //a.printGCode(write, 3000.0, 0, 0, 5, -5, 4, 1, 60.0, false);
+    //a.printGCode(write, 3000.0, -40, 200, -5, -10, 4, 1, 60.0, false);
+    a.printGCode(write, 3000.0, 0, 0, 5, -5, 4, 1, 60.0, false);
     return 0;
 }
 /*
