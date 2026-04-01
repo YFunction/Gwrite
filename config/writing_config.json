@@ -1,0 +1,12 @@
+{
+    "rate": 1800,
+    "startX": 100,
+    "startY": 100,
+    "zUp": 30,
+    "zDown": 0,
+    "rows": 2,
+    "cols": 2,
+    "charSize": 80,
+    "rowMajor": true,
+    "gcodePath": "./output.gcode"
+}

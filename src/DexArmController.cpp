@@ -1,4 +1,5 @@
 #include "../include/DexArmController.h"
+#include "../include/ConfigReader.h"
 #include <iostream>
 #include <fstream>
 #include <algorithm>
@@ -88,4 +89,58 @@ bool DexArmController::executeGCodeFile(const std::string& filepath, bool verbos
     file.close();
     std::cout << "执行完成: 共发送 " << successCount << " 条命令" << std::endl;
     return true;
+}
+
+bool DexArmController::generateAndExecute(const std::string& chineseText,
+                                          double rate,
+                                          double startX, double startY,
+                                          double zUp, double zDown,
+                                          int rows, int cols,
+                                          double charSize,
+                                          bool rowMajor,
+                                          const std::string& gcodePath)
+{
+    // 1. 调用 hanzi 类生成 G-code 文件
+    // printGCode 参数顺序：汉字文本, 速度, 起始X, 起始Y, 抬笔高度, 落笔高度, 行数, 列数, 字框边长, 行优先标志, 输出路径
+    m_hanzi.printGCode(chineseText, rate, startX, startY,
+                       zUp, zDown, rows, cols, charSize, rowMajor, gcodePath);
+
+    // 2. 检查文件是否生成成功
+    std::ifstream testFile(gcodePath);
+    if (!testFile.is_open()) {
+        std::cerr << "错误：无法生成 G-code 文件 " << gcodePath << std::endl;
+        return false;
+    }
+    testFile.close();
+
+    // 3. 执行生成的 G-code 文件
+    return executeGCodeFile(gcodePath, true);
+}
+
+bool DexArmController::loadConfig(const std::string& configPath) {
+    return ConfigReader::loadWritingConfig(configPath, m_writingConfig);
+}
+
+bool DexArmController::generateAndExecute(const std::string& chineseText) {
+    // 1. 调用 hanzi 类生成 G-code 文件
+    // 参数顺序与 printGCode 一致
+    m_hanzi.printGCode(chineseText,
+                       m_writingConfig.rate,
+                       m_writingConfig.startX, m_writingConfig.startY,
+                       m_writingConfig.zUp, m_writingConfig.zDown,
+                       m_writingConfig.rows, m_writingConfig.cols,
+                       m_writingConfig.charSize,
+                       m_writingConfig.rowMajor,
+                       m_writingConfig.gcodePath);
+
+    // 2. 检查文件是否生成成功
+    std::ifstream testFile(m_writingConfig.gcodePath);
+    if (!testFile.is_open()) {
+        std::cerr << "错误：无法生成 G-code 文件 " << m_writingConfig.gcodePath << std::endl;
+        return false;
+    }
+    testFile.close();
+
+    // 3. 执行生成的 G-code 文件
+    return executeGCodeFile(m_writingConfig.gcodePath, true);
 }

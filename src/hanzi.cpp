@@ -1,3 +1,21 @@
+#include<iostream>
+#include<fstream>
+#include<map>
+#include<iomanip>
+#include<cmath>
+#include<filesystem>
+#include<tuple>
+
+#ifdef _WIN32
+    //#include<windows.h>
+#endif
+
+#include"../include/json.hpp"
+#include"../include/hanzi.h"
+
+using namespace std;
+using json=nlohmann::json;
+
 // 在笔画末端延长若干点
 void hanzi::extendStrokeEnd(Bi_Hua& stroke, double length, int numPoints) {
     if (stroke.p.size() < 2 || length <= 0 || numPoints < 1) return;
@@ -18,33 +36,16 @@ void hanzi::extendStrokeEnd(Bi_Hua& stroke, double length, int numPoints) {
         last.y += uy * step;
         // last.z += uz * step; // 通常z不延长
         stroke.p.push_back({last.x, last.y, last.z});
-        cout<<"added"<< "("<<last.x<<","<<last.y<<","<<last.z<<")\n";
+        //cout<<"added"<< "("<<last.x<<","<<last.y<<","<<last.z<<")\n";
     }
 }
-#include<iostream>
-#include<fstream>
-#include<map>
-#include<iomanip>
-#include<cmath>
-#include<filesystem>
-#include<tuple>
-
-#ifdef _WIN32
-    //#include<windows.h>
-#endif
-
-#include"../include/json.hpp"
-#include"../include/hanzi.h"
-
-using namespace std;
-using json=nlohmann::json;
 
 hanzi::hanzi(){
     // 读取平滑滤波配置
     try {
         ifstream cfgF("./config/smooth_config.json");
         if(cfgF.is_open()){
-            cout<<"OK"<<endl;
+            //cout<<"OK"<<endl;
             json cfg;
             cfgF >> cfg;
             if(cfg.contains("minDistSq")) smoothCfg.minDistSq = cfg["minDistSq"].get<double>();
@@ -65,7 +66,7 @@ hanzi::hanzi(){
             if(cfg.contains("fadeInPointCount")) smoothCfg.fadeInPointCount = cfg["fadeInPointCount"].get<int>();
             if(cfg.contains("fadeInLength")) smoothCfg.fadeInLength = cfg["fadeInLength"].get<double>();
             
-            cout<<smoothCfg.backRatio<<endl<<smoothCfg.backMinLen<<endl<<smoothCfg.backMaxLen<<endl<<smoothCfg.fadeInPointCount<<endl;
+            //cout<<smoothCfg.backRatio<<endl<<smoothCfg.backMinLen<<endl<<smoothCfg.backMaxLen<<endl<<smoothCfg.fadeInPointCount<<endl;
 
         }
     } catch(const std::exception& e) {
@@ -246,7 +247,7 @@ void hanzi::printGCode(string name,
 
             // ---- 步骤2：渐入处理（覆盖前几个点的 Z） ----
             int fadeCount = smoothCfg.fadeInPointCount;
-            cout<<fadeCount<<endl;
+            //cout<<fadeCount<<endl;
             if (smoothCfg.fadeInLength > 0.0) {
                 // 按长度计算渐入点数
                 double cumLen = 0.0;
@@ -261,7 +262,7 @@ void hanzi::printGCode(string name,
             }
 
             if (fadeCount > 0) {
-                        cout<<"changed"<<endl;
+                        //cout<<"changed"<<endl;
                 int endIdx = min(fadeCount, (int)absPoints.size() - 1);
                 // 计算前 endIdx 个点的累积距离（物理距离）
                 vector<double> dist(endIdx + 1, 0.0);
@@ -285,7 +286,7 @@ void hanzi::printGCode(string name,
             for (const auto& p : absPoints) {
                 drawPoints.emplace_back(p.x, p.y, p.z);
             }
-            std::cout<<bh.type<<std::endl;
+            //std::cout<<bh.type<<std::endl;
             // ---- 回笔处理（仅对横 "h" 和竖 "sh"） ----
             if (bh.type == "h" || bh.type == "sh") {
                 size_t n = pts.size();
@@ -374,7 +375,7 @@ void hanzi::printGCode(string name,
     gout<<"G0 Z"<<z_up<<"\n";
     gout<<"M30\n";
     gout.close();
-    cout<<"Generated "<<name<<" ("<<count<<" chars) at "<<path<<" which begin at "<<"("<<x0<<","<<y0<<")"<<endl;
+    //cout<<"Generated "<<name<<" ("<<count<<" chars) at "<<path<<" which begin at "<<"("<<x0<<","<<y0<<")"<<endl;
     return;
 }
 
@@ -392,7 +393,7 @@ void hanzi::printAllWord(){
     for(const auto& entry : fs::directory_iterator(dataDir)){
         if(entry.is_regular_file() && entry.path().extension() == ".json"){
             const auto filename = entry.path().stem().u8string();
-            cout<<filename<<":\n";
+            //cout<<filename<<":\n";
             try{
                 json j;
                 std::ifstream f(entry.path());
@@ -402,14 +403,14 @@ void hanzi::printAllWord(){
                     for(const auto& point : stroke){
                         int x = point[0];
                         int y = point[1];
-                        cout<<"("<<x<<","<<y<<") ";
+                        //cout<<"("<<x<<","<<y<<") ";
                     }
-                    cout<<endl;
+                    //cout<<endl;
                 }
             } catch(const std::exception&){
                 // ignore malformed files
             }
-            cout<<endl;
+            //cout<<endl;
         }
     }
     fclose(stdout);
