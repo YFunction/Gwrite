@@ -20,6 +20,7 @@ struct WritingConfig {
 
 class DexArmController {
 public:
+    const WritingConfig& getWritingConfig() const { return m_writingConfig; }
     // 连接串口
     bool connect(const std::string& port, int baudrate = 115200);
     void disconnect();

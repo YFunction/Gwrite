@@ -233,7 +233,7 @@ void hanzi::printGCode(string name,
 
         for (auto bh : hz->bi_hua_) { // 注意这里要用auto bh副本，避免影响原始数据
             // 1. 延长笔画末端
-            extendStrokeEnd(bh, 100.0, bh.p.size()/10); // 可调整参数：延长20单位，3个点
+            extendStrokeEnd(bh, 150.0, bh.p.size()/5); // 可调整参数
             const auto& pts = bh.p;
             if (pts.empty()) continue;
 
@@ -353,6 +353,12 @@ void hanzi::printGCode(string name,
                             drawPoints.emplace_back(x, y, z);
                         }
                     }
+                }
+            }
+
+            if(bh.type=="sh"){
+                for(auto& point : bh.p) {
+                    point.z = (point.z - z_down) * 0.3 +z_down;
                 }
             }
 
