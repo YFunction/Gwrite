@@ -19,13 +19,14 @@ using namespace std;
 using json=nlohmann::json;
 
 class hanzi {
-private:
+public:
     struct Point{
         double x,y,z;
     };
+private:
     struct Bi_Hua{
         std::vector<Point>p;
-        string type;
+        vector<string> types;
     };
     struct HanZi{
         vector<Bi_Hua>bi_hua_;
@@ -54,6 +55,7 @@ private:
 
     double scale=1.0;
     map<string,HanZi>mp;
+    int option_; // 骨架点文件选项：1=原来路径，2=graphics.txt
 
     // Lazy-load character data from ./hanzi_data/<char>.json on demand.
     bool loadCharData(const string& ch);
@@ -61,13 +63,15 @@ private:
 
     void addPoint(Bi_Hua& stroke,double rol=10.0);//插值系数，越大插值越多
     void applyZProfile(Bi_Hua& stroke); // 生成 Z 轴轻重起伏（0~1）
-    static string inferStrokeType(const Bi_Hua& stroke); // 识别笔画类型（如:h/sh/p/n）
+    static vector<string> inferStrokeType(const Bi_Hua& stroke); // 识别笔画类型（如:h/sh/p/n）
     void smooth(Bi_Hua& stroke);//滤波平滑
+    void addBackstroke(Bi_Hua& stroke); // 添加回笔
+    void addLiftForTipOrHook(Bi_Hua& stroke); // 为提或钩添加提笔
     void extendStrokeEnd(Bi_Hua& stroke, double length, int numPoints = 3);
     
 public:
     //初始构造函数
-    explicit hanzi();
+    explicit hanzi(int option = 1);
 
     void printGCode(string name,            // 要写的汉字（可包含多个字符）
                 double Rate,               // 速度

@@ -3,6 +3,7 @@
 #include <iostream>
 #include <fstream>
 #include <algorithm>
+#include <thread>
 
 bool DexArmController::connect(const std::string& port, int baudrate) {
     return m_serial.open(port, baudrate);
@@ -76,14 +77,22 @@ bool DexArmController::executeGCodeFile(const std::string& filepath, bool verbos
 
         if (verbose) std::cout << "[" << lineNum << "] 发送: " << line << std::endl;
 
-        if (!sendCommand(line)) {
-            std::cerr << "错误: 第" << lineNum << "行发送失败或超时" << std::endl;
+        if (!m_serial.write(line + "\r\n")) {
+            std::cerr << "错误: 第" << lineNum << "行发送失败" << std::endl;
             file.close();
             return false;
         }
 
+        // 异步等待响应
+        std::thread([this, line, lineNum, verbose]() {
+            if (!m_serial.waitForResponse("ok", 10000)) {
+                std::cerr << "错误: 第" << lineNum << "行无响应: " << line << std::endl;
+            } else if (verbose) {
+                std::cout << "    -> 成功" << std::endl;
+            }
+        }).detach();
+
         successCount++;
-        if (verbose) std::cout << "    -> 成功" << std::endl;
     }
 
     file.close();

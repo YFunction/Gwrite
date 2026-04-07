@@ -1,3 +1,5 @@
+#include"../include/preDEBUG.h"
+
 #include<iostream>
 #include<fstream>
 #include<map>
@@ -16,9 +18,89 @@
 using namespace std;
 using json=nlohmann::json;
 
+// 特征结构体
+struct SubStrokeFeatures {
+    double totalLen;
+    double chordLen;
+    double bend;
+    double dirAngle;        // 首尾方向角（弧度）
+    double maxCurvature;    // 最大曲率
+    double avgCurvature;
+    double width;           // 在方向上的投影宽度
+    double height;          // 垂直方向投影高度
+};
+
+// 计算子笔画特征
+SubStrokeFeatures computeFeatures(const vector<hanzi::Point>& sub) {
+    SubStrokeFeatures f;
+    size_t n = sub.size();
+    if (n < 2) return f;
+
+    // totalLen
+    f.totalLen = 0.0;
+    for (size_t i = 1; i < n; ++i) {
+        double dx = sub[i].x - sub[i-1].x;
+        double dy = sub[i].y - sub[i-1].y;
+        f.totalLen += sqrt(dx*dx + dy*dy);
+    }
+
+    // chordLen
+    double dx = sub.back().x - sub.front().x;
+    double dy = sub.back().y - sub.front().y;
+    f.chordLen = sqrt(dx*dx + dy*dy);
+
+    // bend
+    f.bend = (f.chordLen > 1e-9) ? f.totalLen / f.chordLen : 1.0;
+
+    // dirAngle
+    f.dirAngle = atan2(dy, dx);
+
+    // curvature
+    f.maxCurvature = 0.0;
+    f.avgCurvature = 0.0;
+    double sumCurv = 0.0;
+    int count = 0;
+    for (size_t i = 1; i + 1 < n; ++i) {
+        // simple curvature approximation
+        double dx1 = sub[i].x - sub[i-1].x;
+        double dy1 = sub[i].y - sub[i-1].y;
+        double dx2 = sub[i+1].x - sub[i].x;
+        double dy2 = sub[i+1].y - sub[i].y;
+        double len1 = sqrt(dx1*dx1 + dy1*dy1);
+        double len2 = sqrt(dx2*dx2 + dy2*dy2);
+        if (len1 > 1e-9 && len2 > 1e-9) {
+            double cross = dx1*dy2 - dy1*dx2;
+            double curv = fabs(cross) / (len1 * len2);
+            f.maxCurvature = max(f.maxCurvature, curv);
+            sumCurv += curv;
+            count++;
+        }
+    }
+    if (count > 0) f.avgCurvature = sumCurv / count;
+
+    // width and height
+    double minProj = 1e18, maxProj = -1e18;
+    double minVert = 1e18, maxVert = -1e18;
+    double cosA = cos(f.dirAngle);
+    double sinA = sin(f.dirAngle);
+    for (const auto& p : sub) {
+        double proj = (p.x - sub.front().x) * cosA + (p.y - sub.front().y) * sinA;
+        double vert = -(p.x - sub.front().x) * sinA + (p.y - sub.front().y) * cosA;
+        minProj = min(minProj, proj);
+        maxProj = max(maxProj, proj);
+        minVert = min(minVert, vert);
+        maxVert = max(maxVert, vert);
+    }
+    f.width = maxProj - minProj;
+    f.height = maxVert - minVert;
+
+    return f;
+}
+
 // 在笔画末端延长若干点
 void hanzi::extendStrokeEnd(Bi_Hua& stroke, double length, int numPoints) {
     if (stroke.p.size() < 2 || length <= 0 || numPoints < 1) return;
+    //if (stroke.types.size() < 2) return;
     // 用值拷贝，避免push_back后引用失效
     auto last = stroke.p.back();
     const auto& prev = stroke.p[stroke.p.size() - 2];
@@ -29,48 +111,113 @@ void hanzi::extendStrokeEnd(Bi_Hua& stroke, double length, int numPoints) {
     if (norm < 1e-8) return;
     double ux = dx / norm;
     double uy = dy / norm;
-    // double uz = dz / norm; // 通常z方向不延长
     double step = length / numPoints;
     for (int i = 1; i <= numPoints; ++i) {
         last.x += ux * step;
         last.y += uy * step;
-        // last.z += uz * step; // 通常z不延长
         stroke.p.push_back({last.x, last.y, last.z});
-        //cout<<"added"<< "("<<last.x<<","<<last.y<<","<<last.z<<")\n";
+        //COUT<<"added"<< "("<<last.x<<","<<last.y<<","<<last.z<<")\n";
     }
 }
 
-hanzi::hanzi(){
+hanzi::hanzi(int option) : option_(option) {
     // 读取平滑滤波配置
     try {
         ifstream cfgF("./config/smooth_config.json");
         if(cfgF.is_open()){
-            //cout<<"OK"<<endl;
+            //COUT<<"OK"<<endl;
             json cfg;
             cfgF >> cfg;
-            if(cfg.contains("minDistSq")) smoothCfg.minDistSq = cfg["minDistSq"].get<double>();
-            if(cfg.contains("passes")) smoothCfg.passes = cfg["passes"].get<int>();
-            if(cfg.contains("colinearThreshold")) smoothCfg.colinearThreshold = cfg["colinearThreshold"].get<double>();
-            if(cfg.contains("maxSegmentLenSq")) smoothCfg.maxSegmentLenSq = cfg["maxSegmentLenSq"].get<double>();
 
-            if(cfg.contains("zProfileType")) smoothCfg.zProfileType = cfg["zProfileType"].get<string>();
-            if(cfg.contains("zMin")) smoothCfg.zMin = cfg["zMin"].get<double>();
-            if(cfg.contains("zMax")) smoothCfg.zMax = cfg["zMax"].get<double>();
-            if(cfg.contains("zCtrl1")) smoothCfg.zCtrl1 = cfg["zCtrl1"].get<double>();
-            if(cfg.contains("zCtrl2")) smoothCfg.zCtrl2 = cfg["zCtrl2"].get<double>();
+        // minDistSq: 点间最小距离的平方，用于去除重复点（距离小于此值则合并），默认0.25，减小可保留更多细节但增加点数
+        if(cfg.contains("minDistSq")) smoothCfg.minDistSq = cfg["minDistSq"].get<double>();
 
-            if(cfg.contains("backRatio")) smoothCfg.backRatio = cfg["backRatio"].get<double>();
-            if(cfg.contains("backMinLen")) smoothCfg.backMinLen = cfg["backMinLen"].get<double>();
-            if(cfg.contains("backMaxLen")) smoothCfg.backMaxLen = cfg["backMaxLen"].get<double>();
-        
-            if(cfg.contains("fadeInPointCount")) smoothCfg.fadeInPointCount = cfg["fadeInPointCount"].get<int>();
-            if(cfg.contains("fadeInLength")) smoothCfg.fadeInLength = cfg["fadeInLength"].get<double>();
-            
-            //cout<<smoothCfg.backRatio<<endl<<smoothCfg.backMinLen<<endl<<smoothCfg.backMaxLen<<endl<<smoothCfg.fadeInPointCount<<endl;
+        // passes: 平滑滤波的迭代次数，默认2，增加可更平滑但可能丢失细节
+        if(cfg.contains("passes")) smoothCfg.passes = cfg["passes"].get<int>();
+
+        // colinearThreshold: 共线阈值，用于去除近似直线上的点，默认0.007，减小可保留更多弯曲点
+        if(cfg.contains("colinearThreshold")) smoothCfg.colinearThreshold = cfg["colinearThreshold"].get<double>();
+
+        // maxSegmentLenSq: 最大段长度的平方，用于控制共线检测的段长，默认9.0，增加可减少去除的点
+        if(cfg.contains("maxSegmentLenSq")) smoothCfg.maxSegmentLenSq = cfg["maxSegmentLenSq"].get<double>();
+
+        // zProfileType: Z轴压力曲线类型，"sin"或"bezier"，默认"bezier"，影响笔压变化的形状
+        if(cfg.contains("zProfileType")) smoothCfg.zProfileType = cfg["zProfileType"].get<string>();
+
+        // zMin: Z轴最小值（笔压最小，0表示抬笔），默认0.0
+        if(cfg.contains("zMin")) smoothCfg.zMin = cfg["zMin"].get<double>();
+
+        // zMax: Z轴最大值（笔压最大，1表示落笔），默认1.0
+        if(cfg.contains("zMax")) smoothCfg.zMax = cfg["zMax"].get<double>();
+
+        // zCtrl1: Bezier曲线控制点1（仅用于bezier类型），默认1.0，调整曲线形状
+        if(cfg.contains("zCtrl1")) smoothCfg.zCtrl1 = cfg["zCtrl1"].get<double>();
+
+        // zCtrl2: Bezier曲线控制点2（仅用于bezier类型），默认1.0，调整曲线形状
+        if(cfg.contains("zCtrl2")) smoothCfg.zCtrl2 = cfg["zCtrl2"].get<double>();
+
+        // backRatio: 回笔长度比例（相对于笔画总长），默认0.12，增加可延长回笔距离
+        if(cfg.contains("backRatio")) smoothCfg.backRatio = cfg["backRatio"].get<double>();
+
+        // backMinLen: 最小回笔长度（mm），默认1.0，确保回笔不小于此值
+        if(cfg.contains("backMinLen")) smoothCfg.backMinLen = cfg["backMinLen"].get<double>();
+
+        // backMaxLen: 最大回笔长度（mm），默认5.0，限制回笔不超过此值
+        if(cfg.contains("backMaxLen")) smoothCfg.backMaxLen = cfg["backMaxLen"].get<double>();
+
+        // fadeInPointCount: 渐入点数（0表示禁用），默认0，从笔画起点开始渐入笔压
+        if(cfg.contains("fadeInPointCount")) smoothCfg.fadeInPointCount = cfg["fadeInPointCount"].get<int>();
+
+        // fadeInLength: 渐入长度（mm，优先于点数），默认0.0，按距离渐入笔压
 
         }
     } catch(const std::exception& e) {
         cerr << "Warning: failed to load smooth_config.json (using defaults): " << e.what() << '\n';
+    }
+
+    // 如果option==2，预加载graphics.txt中的所有字符
+    if (option_ == 2) {
+        try {
+            ifstream f("./hanzi_data/graphics.txt");
+            if (f.is_open()) {
+                string line;
+                while (getline(f, line)) {
+                    if (line.empty()) continue;
+                    json j = json::parse(line);
+                    if (j.contains("character") && j.contains("medians")) {
+                        string ch = j["character"].get<string>();
+                        cout<<ch<<" ";
+                        HanZi h;
+                        for (const auto& stroke : j["medians"]) {
+                            Bi_Hua s;
+                            for (const auto& point : stroke) {
+                                Point pt{point[0], point[1], 0.0};
+                                s.p.push_back(pt);
+                            }
+                            // 处理笔画，与loadCharData一致
+                            addPoint(s);
+                            //smooth(s);
+                            s.types = inferStrokeType(s);
+                            extendStrokeEnd(s, 100.0, s.p.size()/8);
+                            applyZProfile(s);
+                            addBackstroke(s);
+                            if (find(s.types.begin(), s.types.end(), "t") != s.types.end() || find(s.types.begin(), s.types.end(), "g") != s.types.end()) {
+                                addLiftForTipOrHook(s);
+                            }
+                            if (find(s.types.begin(), s.types.end(), "h") != s.types.end() || find(s.types.begin(), s.types.end(), "sh") != s.types.end()) {
+                                for (auto& point : s.p) {
+                                    point.z = smoothCfg.zMax + (point.z - smoothCfg.zMax) * 0.3;
+                                }
+                            }
+                            h.bi_hua_.push_back(s);
+                        }
+                        mp[ch] = std::move(h);
+                    }
+                }
+            }
+        } catch (const std::exception& e) {
+            cerr << "Warning: failed to load graphics.txt: " << e.what() << endl;
+        }
     }
 
     return;
@@ -98,6 +245,7 @@ bool hanzi::loadCharData(const string& ch){
     if(!j.contains("medians")) return false;
 
     HanZi h;
+    
     for(const auto& stroke : j["medians"]){
         Bi_Hua s;
         for(const auto& point : stroke){
@@ -105,9 +253,20 @@ bool hanzi::loadCharData(const string& ch){
             s.p.push_back(pt);
         }
         addPoint(s);
+        //smooth(s);
+        s.types = inferStrokeType(s);
+        //COUT<<s.type<<endl;
+        extendStrokeEnd(s, 100.0, s.p.size()/8);
         applyZProfile(s);
-        smooth(s);
-        s.type = inferStrokeType(s);
+        addBackstroke(s);
+        if (find(s.types.begin(), s.types.end(), "t") != s.types.end() || find(s.types.begin(), s.types.end(), "g") != s.types.end()) {
+            addLiftForTipOrHook(s);
+        }
+        if (find(s.types.begin(), s.types.end(), "h") != s.types.end() || find(s.types.begin(), s.types.end(), "sh") != s.types.end()) {
+            for (auto& point : s.p) {
+                point.z = smoothCfg.zMax + (point.z - smoothCfg.zMax) * 0.3;
+            }
+        }
         h.bi_hua_.push_back(s);
     }
     mp[ch] = std::move(h);
@@ -117,7 +276,7 @@ bool hanzi::loadCharData(const string& ch){
 const hanzi::HanZi* hanzi::getHanZi(const string& ch){
     auto it = mp.find(ch);
     if(it != mp.end()) return &it->second;
-    if(loadCharData(ch)){
+    if(option_ == 1 && loadCharData(ch)){
         return &mp[ch];
     }
     return nullptr;
@@ -158,14 +317,14 @@ void hanzi::printGCode(string name,
     ofstream gout;
     gout.open(path);
     if(!gout.is_open()){
-        cout<<"Couldn't open the file "<<path<<endl;
+        //COUT<<"Couldn't open the file "<<path<<endl;
         return;
     }
     gout<<fixed<<setprecision(2);
     gout<<"G21\n";
     gout<<"G90\n";
     gout<<"G17\n";
-    gout<<"G0 Z"<<z_up<<"\n\n";
+    gout<<"G0 Z"<<z_up+10<<"\n\n";
 
     auto chars = splitUtf8Chars(name);
     int cols = max(1, n);
@@ -232,8 +391,6 @@ void hanzi::printGCode(string name,
         // }
 
         for (auto bh : hz->bi_hua_) { // 注意这里要用auto bh副本，避免影响原始数据
-            // 1. 延长笔画末端
-            extendStrokeEnd(bh, 150.0, bh.p.size()/5); // 可调整参数
             const auto& pts = bh.p;
             if (pts.empty()) continue;
 
@@ -247,7 +404,7 @@ void hanzi::printGCode(string name,
 
             // ---- 步骤2：渐入处理（覆盖前几个点的 Z） ----
             int fadeCount = smoothCfg.fadeInPointCount;
-            //cout<<fadeCount<<endl;
+            //COUT<<fadeCount<<endl;
             if (smoothCfg.fadeInLength > 0.0) {
                 // 按长度计算渐入点数
                 double cumLen = 0.0;
@@ -262,7 +419,7 @@ void hanzi::printGCode(string name,
             }
 
             if (fadeCount > 0) {
-                        //cout<<"changed"<<endl;
+                        //COUT<<"changed"<<endl;
                 int endIdx = min(fadeCount, (int)absPoints.size() - 1);
                 // 计算前 endIdx 个点的累积距离（物理距离）
                 vector<double> dist(endIdx + 1, 0.0);
@@ -286,81 +443,6 @@ void hanzi::printGCode(string name,
             for (const auto& p : absPoints) {
                 drawPoints.emplace_back(p.x, p.y, p.z);
             }
-            //std::cout<<bh.type<<std::endl;
-            // ---- 回笔处理（仅对横 "h" 和竖 "sh"） ----
-            if (bh.type == "h" || bh.type == "sh") {
-                size_t n = pts.size();
-                if (n >= 3) {
-                    // 计算原始坐标中的累积距离
-                    vector<double> origDist(n, 0.0);
-                    for (size_t i = 1; i < n; ++i) {
-                        double dx = pts[i].x - pts[i-1].x;
-                        double dy = pts[i].y - pts[i-1].y;
-                        origDist[i] = origDist[i-1] + sqrt(dx*dx + dy*dy);
-                    }
-                    double origTotalLen = origDist.back();
-
-                    double physTotalLen = origTotalLen * scaleForChar;
-                    const double backRatio = smoothCfg.backRatio;
-                    const double minBackLen = smoothCfg.backMinLen;
-                    const double maxBackLen = smoothCfg.backMaxLen;
-                    double backPhysLen = physTotalLen * backRatio;
-                    backPhysLen = min(max(backPhysLen, minBackLen), maxBackLen);
-                    double backOrigLen = backPhysLen / scaleForChar;
-
-                    int startIdx = -1;
-                    for (int i = n-1; i >= 0; --i) {
-                        if (origTotalLen - origDist[i] >= backOrigLen) {
-                            startIdx = i;
-                            break;
-                        }
-                    }
-                    if (startIdx < 0) startIdx = 0;
-                    if (startIdx >= n-1) startIdx = n-2;
-
-                    // 收集逆序回笔点（不含原末尾点）
-                    vector<Point> backPts;
-                    for (int i = n-2; i >= startIdx; --i) {
-                        backPts.push_back(pts[i]);
-                    }
-
-                    if (!backPts.empty()) {
-                        // 回笔轨迹的累积距离
-                        vector<double> backDist(backPts.size(), 0.0);
-                        double dx0 = backPts[0].x - pts.back().x;
-                        double dy0 = backPts[0].y - pts.back().y;
-                        backDist[0] = sqrt(dx0*dx0 + dy0*dy0);
-                        for (size_t i = 1; i < backPts.size(); ++i) {
-                            double dx = backPts[i].x - backPts[i-1].x;
-                            double dy = backPts[i].y - backPts[i-1].y;
-                            backDist[i] = backDist[i-1] + sqrt(dx*dx + dy*dy);
-                        }
-                        double backTotalLen = backDist.back();
-
-                        double startZNorm = pts.back().z;
-                        double endZNorm = 0.0;
-
-                        double startZ = z_down;               // 回笔起点高度
-                        double endZ = z_up * 0.3;       // 回笔终点高度
-
-                        for (size_t i = 0; i < backPts.size(); ++i) {
-                            double t = (backTotalLen > 1e-6) ? (backDist[i] / backTotalLen) : 0.0;
-                            double zNorm = startZNorm * (1.0 - t) + endZNorm * t;
-                            double x = xOrigin + (backPts[i].x * scaleForChar + xOffset);
-                            double y = yOrigin + (backPts[i].y * scaleForChar + yOffset);
-                            double z = startZ * (1.0 -t) + endZ * t;   // 线性插值
-                            //cout<<"added"<<x<<","<<y<<","<<z<<endl;
-                            drawPoints.emplace_back(x, y, z);
-                        }
-                    }
-                }
-            }
-
-            if(bh.type=="sh"){
-                for(auto& point : bh.p) {
-                    point.z = (point.z - z_down) * 0.3 +z_down;
-                }
-            }
 
             // ---- 输出当前笔画（含回笔）的 G 代码 ----
             if (drawPoints.empty()) continue;
@@ -381,7 +463,7 @@ void hanzi::printGCode(string name,
     gout<<"G0 Z"<<z_up<<"\n";
     gout<<"M30\n";
     gout.close();
-    //cout<<"Generated "<<name<<" ("<<count<<" chars) at "<<path<<" which begin at "<<"("<<x0<<","<<y0<<")"<<endl;
+    //COUT<<"Generated "<<name<<" ("<<count<<" chars) at "<<path<<" which begin at "<<"("<<x0<<","<<y0<<")"<<endl;
     return;
 }
 
@@ -399,7 +481,7 @@ void hanzi::printAllWord(){
     for(const auto& entry : fs::directory_iterator(dataDir)){
         if(entry.is_regular_file() && entry.path().extension() == ".json"){
             const auto filename = entry.path().stem().u8string();
-            //cout<<filename<<":\n";
+            //COUT<<filename<<":\n";
             try{
                 json j;
                 std::ifstream f(entry.path());
@@ -409,14 +491,14 @@ void hanzi::printAllWord(){
                     for(const auto& point : stroke){
                         int x = point[0];
                         int y = point[1];
-                        //cout<<"("<<x<<","<<y<<") ";
+                        //COUT<<"("<<x<<","<<y<<") ";
                     }
-                    //cout<<endl;
+                    //COUT<<endl;
                 }
             } catch(const std::exception&){
                 // ignore malformed files
             }
-            //cout<<endl;
+            //COUT<<endl;
         }
     }
     fclose(stdout);
@@ -616,26 +698,118 @@ void hanzi::applyZProfile(Bi_Hua& stroke) {
     }
 }
 
-string hanzi::inferStrokeType(const Bi_Hua& stroke){
-    if(stroke.p.size() < 2) return "o";
-    const auto& a = stroke.p.front();
-    const auto& b = stroke.p.back();
-    double dx = b.x - a.x;
-    double dy = b.y - a.y;
-    double adx = fabs(dx);
-    double ady = fabs(dy);
+vector<string> hanzi::inferStrokeType(const hanzi::Bi_Hua& stroke){
+    if(stroke.p.size() < 2) return {"o"};
+    const auto& pts = stroke.p;
+    size_t n = pts.size();
 
-    if(adx < 1e-6 && ady < 1e-6) return "o";
+    // 计算总长度
+    double totalLen = 0.0;
+    for (size_t i = 1; i < n; ++i) {
+        double dx = pts[i].x - pts[i - 1].x;
+        double dy = pts[i].y - pts[i - 1].y;
+        totalLen += sqrt(dx * dx + dy * dy);
+    }
 
-    // 1) 横
-    if(ady < adx * 0.5) return "h";
-    // 2) 竖
-    if(adx < ady * 0.5) return "sh";
-    // 3) 撇/捺
-    if(dx < 0 && dy > 0) return "p"; // 撇
-    if(dx > 0 && dy > 0) return "n"; // 捺
+    // 计算方向角
+    vector<double> theta(n, 0.0);
+    for (size_t i = 1; i < n; ++i) {
+        double dx = pts[i].x - pts[i - 1].x;
+        double dy = pts[i].y - pts[i - 1].y;
+        theta[i] = atan2(dy, dx);
+    }
+    theta[0] = theta[1]; // 首点用第一段
 
-    return "o";
+    // 平滑角度序列 (简单移动平均)
+    vector<double> smoothTheta = theta;
+    for (size_t i = 1; i + 1 < n; ++i) {
+        smoothTheta[i] = (theta[i-1] + theta[i] + theta[i+1]) / 3.0;
+    }
+
+    // 基于累积角度变化的分段
+    vector<size_t> keyPoints = {0};
+    double cumAngle = 0.0;
+    const double ANGLE_THRESH = 0.8; // 累积阈值
+    for (size_t i = 1; i < n; ++i) {
+        double delta = fmod(smoothTheta[i] - smoothTheta[i-1] + M_PI, 2*M_PI) - M_PI;
+        cumAngle += fabs(delta);
+        if (cumAngle > ANGLE_THRESH) {
+            keyPoints.push_back(i);
+            cumAngle = 0.0;
+        }
+    }
+    keyPoints.push_back(n - 1);
+
+    // 输出关键点
+    // COUT << "Key points: ";
+    // for (auto kp : keyPoints) 
+    //     COUT << "(" << stroke.p[kp].x << "," << stroke.p[kp].y << ")\n";
+    // COUT << endl;
+
+    // 分割成子笔画并判断类型
+    vector<string> subTypes;
+    for (size_t k = 0; k + 1 < keyPoints.size(); ++k) {
+        size_t start = keyPoints[k];
+        size_t end = keyPoints[k + 1];
+        if (end - start < 2) continue;
+
+        vector<Point> subPts(pts.begin() + start, pts.begin() + end + 1);
+        SubStrokeFeatures f = computeFeatures(subPts);
+
+        string subType = "o";
+        if (f.totalLen < 10.0) {
+            subType = "d"; // 点
+        } else if (f.bend > 1.5 && f.maxCurvature > 0.1) {
+            // 钩：高弯曲度和曲率
+            subType = "g";
+        } else {
+            double absDir = fabs(f.dirAngle);
+            if (absDir < M_PI / 6) {
+                subType = "h"; // 横
+            } else if (fabs(absDir - M_PI / 2) < M_PI / 6 && f.dirAngle < 0) {
+                subType = "sh"; // 竖（向下写）
+            } else if (f.dirAngle > -M_PI  && f.dirAngle < -M_PI / 2) {
+                subType = "p"; // 撇
+            } else if (f.dirAngle > -M_PI / 2 && f.dirAngle < 0) {
+                subType = "n"; // 捺
+            } else if (f.dirAngle > -M_PI / 2 && f.dirAngle < M_PI / 6 && f.bend < 1.2) {
+                subType = "t"; // 提
+            } else if (fabs(absDir - M_PI / 2) < M_PI / 6 && f.dirAngle > 0) {
+                subType = "g"; // 钩（向上写）
+            }
+        }
+        // 如果子笔画长度小于总长度的5%，忽略
+        if (f.totalLen < totalLen * 0.05) continue;
+        subTypes.push_back(subType);
+    }
+
+    // 输出子类型
+    // COUT << "Sub types: ";
+    // for (auto st : subTypes) COUT << st << " ";
+    // COUT << endl;
+
+    // 合并相邻相同元笔画
+    vector<string> mergedSubTypes;
+    if (!subTypes.empty()) {
+        mergedSubTypes.push_back(subTypes[0]);
+        for (size_t i = 1; i < subTypes.size(); ++i) {
+            if (subTypes[i] != mergedSubTypes.back()) {
+                mergedSubTypes.push_back(subTypes[i]);
+            }
+        }
+    }
+
+    // 根据子笔画组合判断整体类型
+    if (mergedSubTypes.empty()) return {"o"};
+
+    // 返回子笔画类型向量
+    // COUT << "Result: ";
+    // for (size_t i = 0; i < mergedSubTypes.size(); ++i) {
+    //     if (i > 0) COUT << "-";
+    //     COUT << mergedSubTypes[i];
+    // }
+    // COUT << endl;
+    return mergedSubTypes;
 }
 
 void hanzi::smooth(Bi_Hua& stroke){
@@ -719,4 +893,92 @@ void hanzi::smooth(Bi_Hua& stroke){
     out.push_back(filtered.back());
 
     stroke.p = move(out);
+}
+
+void hanzi::addBackstroke(Bi_Hua& stroke) {
+    if (find(stroke.types.begin(), stroke.types.end(), "h") == stroke.types.end() && find(stroke.types.begin(), stroke.types.end(), "sh") == stroke.types.end()) return;
+    if (!(stroke.types.back() == "h" || stroke.types.back() == "sh"))return;
+    auto& pts = stroke.p;
+    size_t n = pts.size();
+    if (n < 3) return;
+
+    // 计算原始坐标中的累积距离
+    vector<double> origDist(n, 0.0);
+    for (size_t i = 1; i < n; ++i) {
+        double dx = pts[i].x - pts[i-1].x;
+        double dy = pts[i].y - pts[i-1].y;
+        origDist[i] = origDist[i-1] + sqrt(dx*dx + dy*dy);
+    }
+    double origTotalLen = origDist.back();
+
+    double physTotalLen = origTotalLen; // 假设scale=1
+    const double backRatio = smoothCfg.backRatio;
+    const double minBackLen = smoothCfg.backMinLen;
+    const double maxBackLen = smoothCfg.backMaxLen;
+    double backPhysLen = physTotalLen * backRatio;
+    backPhysLen = min(max(backPhysLen, minBackLen), maxBackLen);
+    double backOrigLen = backPhysLen;
+
+    int startIdx = -1;
+    for (int i = n-1; i >= 0; --i) {
+        if (origTotalLen - origDist[i] >= backOrigLen) {
+            startIdx = i;
+            break;
+        }
+    }
+    if (startIdx < 0) startIdx = 0;
+    if (startIdx >= n-1) startIdx = n-2;
+
+    // 收集逆序回笔点（不含原末尾点）
+    vector<Point> backPts;
+    for (int i = n-2; i >= startIdx; --i) {
+        backPts.push_back(pts[i]);
+    }
+
+    if (!backPts.empty()) {
+        // 设置backPts的z为0.0
+        for (auto& pt : backPts) {
+            pt.z = 0.0;
+        }
+        // 添加到stroke.p
+        pts.insert(pts.end(), backPts.begin(), backPts.end());
+    }
+}
+
+void hanzi::addLiftForTipOrHook(Bi_Hua& stroke) {
+    auto& pts = stroke.p;
+    size_t n = pts.size();
+    if (n < 3) return;
+
+    // 计算累积距离
+    vector<double> dist(n, 0.0);
+    for (size_t i = 1; i < n; ++i) {
+        double dx = pts[i].x - pts[i-1].x;
+        double dy = pts[i].y - pts[i-1].y;
+        dist[i] = dist[i-1] + sqrt(dx*dx + dy*dy);
+    }
+    double totalLen = dist.back();
+
+    // 后三分之一的长度
+    double liftLen = totalLen / 3.0;
+
+    // 找到起始点：距离末尾 >= liftLen 的点
+    size_t startIdx = n - 1;
+    for (size_t i = 0; i < n; ++i) {
+        if (totalLen - dist[i] >= liftLen) {
+            startIdx = i;
+            break;
+        }
+    }
+
+    // 对 startIdx 到 n-1 的点，设置 z 从 1 到 0，使用 sin 曲线
+    for (size_t i = startIdx; i < n; ++i) {
+        double localDist = totalLen - dist[i]; // 从末尾开始的距离
+        double t = (liftLen - localDist) / liftLen; // 0 到 1
+        if (t < 0.0) t = 0.0;
+        if (t > 1.0) t = 1.0;
+        // sin 曲线：从 1 到 0
+        double zNorm = 1.0 - sin(M_PI * t / 2.0) * 2.0 ;
+        pts[i].z = zNorm;
+    }
 }
