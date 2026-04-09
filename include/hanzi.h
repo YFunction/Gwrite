@@ -24,12 +24,20 @@ public:
         double x,y,z;
     };
 private:
+    struct SubStroke {
+        string type;
+        size_t startIndex;  // 在笔画点集中的起始点索引
+        size_t endIndex;    // 结束点索引
+        double startRatio;  // 在笔画总长度中的起始位置比例
+        double endRatio;    // 在笔画总长度中的结束位置比例
+        Point dir;          // 子笔画的方向向量
+    };
     struct Bi_Hua{
-        std::vector<Point>p;
-        vector<string> types;
+        std::vector<Point> p;
+        vector<SubStroke> subStrokes;  // 子笔画列表
     };
     struct HanZi{
-        vector<Bi_Hua>bi_hua_;
+        vector<Bi_Hua> bi_hua_;
     };
 
     struct SmoothConfig {
@@ -63,12 +71,13 @@ private:
 
     void addPoint(Bi_Hua& stroke,double rol=10.0);//插值系数，越大插值越多
     void applyZProfile(Bi_Hua& stroke); // 生成 Z 轴轻重起伏（0~1）
-    static vector<string> inferStrokeType(const Bi_Hua& stroke); // 识别笔画类型（如:h/sh/p/n）
+    static void inferStrokeType(Bi_Hua& stroke); // 识别笔画类型（如:h/sh/p/n），同时填充子笔画信息
     void smooth(Bi_Hua& stroke);//滤波平滑
-    void addBackstroke(Bi_Hua& stroke); // 添加回笔
-    void addLiftForTipOrHook(Bi_Hua& stroke); // 为提或钩添加提笔
+    void addBackstroke(Bi_Hua& stroke); // 添加回笔    void personalizeStroke(Bi_Hua& stroke); // 个性化业画（添加提笔和z章调整）    void addLiftForTipOrHook(Bi_Hua& stroke); // 为提或钩添加提笔
     void extendStrokeEnd(Bi_Hua& stroke, double length, int numPoints = 3);
-    
+    void personalizeStroke(Bi_Hua& stroke);
+    void addLiftForTipOrHook(Bi_Hua& stroke);
+    void updateSubStrokeIndices(Bi_Hua& stroke);
 public:
     //初始构造函数
     explicit hanzi(int option = 1);

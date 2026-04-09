@@ -44,7 +44,7 @@ int main() {
     std::cout << "归位完成。" << std::endl;
 
     // 4. 执行汉字书写（使用配置文件中的参数）
-    std::string text = "你好";  // 要书写的汉字
+    std::string text = "天";  // 要书写的汉字
     std::cout << "开始书写汉字: " << text << std::endl;
 
     if (!arm.generateAndExecute(text)) {

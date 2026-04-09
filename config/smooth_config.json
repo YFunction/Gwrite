@@ -1,14 +1,14 @@
 {
-    "minDistSq": 0.05,
+    "minDistSq": 0.005,
     "passes": 2,
     "colinearThreshold": 0.007,
     "maxSegmentLenSq": 9.0,
-    "zProfileType": "sin",
+    "zProfileType": "bezier",
     "zMin": 0.0,
     "zMax": 1.0,
     "backRatio": 0.2,
     "backMinLen": 5.0,
     "backMaxLen": 100.0,
-    "fadeInPointCount": 10,
+    "fadeInPointCount": 5,
     "fadeInLength": 0.0
 }

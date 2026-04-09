@@ -131,7 +131,7 @@ bool SerialPort::readLine(std::string& line, int timeoutMs) {
 
 bool SerialPort::waitForResponse(const std::string& expected, int timeoutMs) {
     if (!m_isOpen) return false;
-    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    Sleep(250);
     auto start = std::chrono::steady_clock::now();
 
     while (true) {
