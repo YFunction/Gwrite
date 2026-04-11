@@ -19,6 +19,134 @@
 #define M_PI acos(-1.0)
 #endif
 
+#ifdef DEBUG
+#include <opencv2/viz.hpp>
+#include <opencv2/viz/widgets.hpp>
+#include <opencv2/highgui.hpp>
+#include <iostream>
+#include <cmath>
+
+void hanzi::print3D(const hanzi::Bi_Hua& stroke, const std::string& windowName)
+{
+    if (stroke.p.empty()) {
+        std::cerr << "Stroke has no points to visualize." << std::endl;
+        return;
+    }
+
+    // 1. 创建窗口
+    cv::viz::Viz3d vizWindow(windowName);
+    vizWindow.setWindowSize(cv::Size(800, 600));
+    vizWindow.setBackgroundColor(cv::viz::Color::black());
+
+    // 2. 转换点集
+    std::vector<cv::Point3d> points;
+    points.reserve(stroke.p.size());
+    for (const auto& pt : stroke.p) {
+        points.emplace_back(pt.x, pt.y, pt.z * 50.0);
+    }
+
+    // 3. 计算包围盒
+    cv::Point3d minPt = points[0], maxPt = points[0];
+    for (const auto& p : points) {
+        minPt.x = std::min(minPt.x, p.x);
+        minPt.y = std::min(minPt.y, p.y);
+        minPt.z = std::min(minPt.z, p.z);
+        maxPt.x = std::max(maxPt.x, p.x);
+        maxPt.y = std::max(maxPt.y, p.y);
+        maxPt.z = std::max(maxPt.z, p.z);
+    }
+    cv::Point3d center((minPt.x + maxPt.x) / 2,
+                       (minPt.y + maxPt.y) / 2,
+                       (minPt.z + maxPt.z) / 2);
+    double span = std::max({maxPt.x - minPt.x, maxPt.y - minPt.y, maxPt.z - minPt.z});
+    span = std::max(span, 100.0);
+
+    // 4. 网格（XOY 平面）
+    double gridZ = 0.0;
+    double gridSize = span * 1.5;
+    int cellsPerSide = 20;
+    double cellSize = gridSize / cellsPerSide;
+    cv::viz::WGrid gridWidget(cv::Vec2i(cellsPerSide, cellsPerSide),
+                              cv::Vec2d(cellSize, cellSize),
+                              cv::viz::Color::gray());
+    cv::Affine3d gridPose = cv::Affine3d().translate(cv::Vec3d(center.x, center.y, gridZ));
+    vizWindow.showWidget("grid", gridWidget, gridPose);
+
+    // 5. 点云和连线
+    cv::viz::WCloud cloudWidget(points, cv::viz::Color::green());
+    cloudWidget.setRenderingProperty(cv::viz::POINT_SIZE, 5.0);
+    vizWindow.showWidget("points", cloudWidget);
+
+    if (points.size() >= 2) {
+        cv::viz::WPolyLine polyLine(points, cv::viz::Color::yellow());
+        polyLine.setRenderingProperty(cv::viz::LINE_WIDTH, 2.0);
+        vizWindow.showWidget("lines", polyLine);
+    }
+
+    // 6. 坐标轴
+    vizWindow.showWidget("coordinate", cv::viz::WCoordinateSystem(span * 0.3));
+
+    // 7. 初始相机参数（参照 main.cpp 的视角）
+    cv::Vec3d camPos(center.x + span * 1.5, center.y - span * 1.5, center.z + span * 1.2);
+    cv::Vec3d camFocal(center.x, center.y, center.z);
+    cv::Vec3d camUp(0, 0, 1);
+    cv::Affine3d camPose = cv::viz::makeCameraPose(camPos, camFocal, camUp);
+    vizWindow.setViewerPose(camPose);
+
+    // 8. 移动参数
+    double moveSpeed = span * 0.05;   // 每次移动距离（可调）
+    double viewDist = cv::norm(camFocal - camPos);  // 保持的视距
+
+    // 主循环
+    while (!vizWindow.wasStopped()) {
+        // 渲染一帧
+        vizWindow.spinOnce(1, true);
+
+        // 处理键盘输入（连续移动）
+        int key = cv::waitKey(10);  // 10ms 轮询
+        if (key == 27 || key == 'q' || key == 'Q') {
+            break;
+        }
+
+        // 计算当前视线方向
+        cv::Vec3d viewDir = camFocal - camPos;
+        double curDist = cv::norm(viewDir);
+        if (curDist < 1e-6) curDist = viewDist;
+        viewDir /= curDist;
+        cv::Vec3d right = cv::normalize(viewDir.cross(camUp));
+        cv::Vec3d up = camUp;
+
+        // 移动向量（类似 main.cpp 中的 move 累加）
+        cv::Vec3d move(0, 0, 0);
+        if (key == 'w' || key == 'W') move += viewDir;
+        if (key == 's' || key == 'S') move -= viewDir;
+        if (key == 'a' || key == 'A') move -= right;
+        if (key == 'd' || key == 'D') move += right;
+        if (key == 'q' || key == 'Q') move -= up;
+        if (key == 'e' || key == 'E') move += up;
+
+        if (cv::norm(move) > 0.0) {
+            move = cv::normalize(move) * moveSpeed;
+            camPos += move;
+            camFocal += move;
+
+            // 重新计算视线方向并保持原视距
+            viewDir = camFocal - camPos;
+            double newDist = cv::norm(viewDir);
+            if (newDist > 1e-6) {
+                viewDir /= newDist;
+                camFocal = camPos + viewDir * viewDist;
+            }
+            camPose = cv::viz::makeCameraPose(camPos, camFocal, camUp);
+            vizWindow.setViewerPose(camPose);
+        }
+    }
+
+    vizWindow.close();
+    cv::waitKey(1); // 清理消息队列
+}
+#endif
+
 using namespace std;
 using json=nlohmann::json;
 
@@ -171,6 +299,7 @@ hanzi::hanzi(int option) : option_(option) {
 
         // fadeInPointCount: 渐入点数（0表示禁用），默认0，从笔画起点开始渐入笔压
         if(cfg.contains("fadeInPointCount")) smoothCfg.fadeInPointCount = cfg["fadeInPointCount"].get<int>();
+        if(cfg.contains("strokeLeadInMinLen")) smoothCfg.strokeLeadInMinLen = cfg["strokeLeadInMinLen"].get<double>();
 
         // fadeInLength: 渐入长度（mm，优先于点数），默认0.0，按距离渐入笔压
 
@@ -206,6 +335,7 @@ hanzi::hanzi(int option) : option_(option) {
                             extendStrokeEnd(s, 100.0, s.p.size()/8);
                             applyZProfile(s);
                             addBackstroke(s);
+                            //addStrokeLeadIn(s);
                             personalizeStroke(s);
                             h.bi_hua_.push_back(s);
                         }
@@ -224,20 +354,70 @@ hanzi::hanzi(int option) : option_(option) {
 bool hanzi::loadCharData(const string& ch){
     if(mp.find(ch) != mp.end()) return true;
 
-    std::filesystem::path p = std::filesystem::u8path("./hanzi_data");
-    p /= std::filesystem::u8path(ch);
-    p += u8".json";
-
-    if(!std::filesystem::exists(p)) return false;
-
-    std::ifstream f(p);
-    if(!f.is_open()) return false;
-
     json j;
-    try{
-        f >> j;
-    } catch(const std::exception&) {
-        return false;
+    const bool isSpecialChar = (ch == "<" || ch == ">" || ch == "\"");
+
+    if (isSpecialChar) {
+        std::filesystem::path prePath = std::filesystem::u8path("./hanzi_data/pre.json");
+        if (!std::filesystem::exists(prePath)) return false;
+
+        std::ifstream preFile(prePath);
+        if (!preFile.is_open()) return false;
+
+        json preRoot;
+        try {
+            preFile >> preRoot;
+        } catch (const std::exception&) {
+            return false;
+        }
+
+        bool found = false;
+        if (preRoot.is_object()) {
+            if (preRoot.contains(ch)) {
+                j = preRoot[ch];
+                found = true;
+            } else if (preRoot.contains("character") && preRoot.contains("medians")) {
+                try {
+                    if (preRoot["character"].get<string>() == ch) {
+                        j = preRoot;
+                        found = true;
+                    }
+                } catch (const std::exception&) {
+                    found = false;
+                }
+            }
+        } else if (preRoot.is_array()) {
+            for (const auto& item : preRoot) {
+                if (!item.is_object()) continue;
+                if (!item.contains("character") || !item.contains("medians")) continue;
+                try {
+                    if (item["character"].get<string>() == ch) {
+                        j = item;
+                        found = true;
+                        break;
+                    }
+                } catch (const std::exception&) {
+                    continue;
+                }
+            }
+        }
+
+        if (!found) return false;
+    } else {
+        std::filesystem::path p = std::filesystem::u8path("./hanzi_data");
+        p /= std::filesystem::u8path(ch);
+        p += u8".json";
+
+        if(!std::filesystem::exists(p)) return false;
+
+        std::ifstream f(p);
+        if(!f.is_open()) return false;
+
+        try{
+            f >> j;
+        } catch(const std::exception&) {
+            return false;
+        }
     }
 
     if(!j.contains("medians")) return false;
@@ -250,26 +430,56 @@ bool hanzi::loadCharData(const string& ch){
     
     for(const auto& stroke : j["medians"]){
         Bi_Hua s;
+        // #sym:originPoints 保存原始骨架点
         for(const auto& point : stroke){
             Point pt{point[0], point[1], 0.0};
             s.p.push_back(pt);
-            
+            s.originPoints.push_back(pt);
             // COUT<<pt.x<<","<<pt.y<<","<<pt.z<<endl;
             // out_<<pt.x<<","<<pt.y<<","<<pt.z<<endl;
         }
         inferStrokeType(s);
+        //COUT << s.type << "\n";
+        //outPoint(s,"out1.csv");
         addPoint(s);
+        //outPoint(s,"out2.csv");
         updateSubStrokeIndices(s);
+
+        auto tempOut=[](Bi_Hua& s){
+            fstream tempout("after.csv",ios::out);
+            tempout<<"x,y\n";
+            for(auto& pi:s.p){
+                tempout<<pi.x<<","<<pi.y<<endl;
+            }
+            tempout.close();
+            
+            fstream _("before.csv",ios::out);
+            _<<"x,y\n";
+            for(auto& pi:s.originPoints){
+                _<<pi.x<<","<<pi.y<<endl;
+            }
+            _.close();
+            
+        };
+        //if(s.type=="-h-sh-t")tempOut(s);
+
+        //outPoint(s,"out3.csv");
         //COUT<<s.type<<endl;
         extendStrokeEnd(s, 100.0, s.p.size()/8);
+        //outPoint(s,"out4.csv");
+        //print3D(s);
         applyZProfile(s);
+        //outPoint(s,"out5.csv");
         addBackstroke(s);
+        //outPoint(s,"out6.csv");
+        //addStrokeLeadIn(s,1);
         // for(auto& pt:s.p){
         //     //COUT<<pt.x<<","<<pt.y<<","<<pt.z<<endl;
         //     out_<<pt.x<<","<<pt.y<<","<<pt.z<<endl;
         // }
         personalizeStroke(s);
-        //smooth(s);
+        //outPoint(s,"out7.csv");
+        smooth(s);
         h.bi_hua_.push_back(s);
     }
     out_.close();
@@ -573,7 +783,7 @@ void hanzi::applyZProfile(Bi_Hua& stroke) {
     auto& pts = stroke.p;
     if (pts.size() < 2) return;
 
-    // ---------- 1. 计算弧长和归一化参数 t ----------
+    // 1. 计算弧长和总长度（保持不变）
     vector<double> dist(pts.size(), 0.0);
     for (size_t i = 1; i < pts.size(); ++i) {
         double dx = pts[i].x - pts[i - 1].x;
@@ -586,116 +796,75 @@ void hanzi::applyZProfile(Bi_Hua& stroke) {
         return;
     }
 
-    // ---------- 2. 计算每个点的方向角和角度变化 ----------
-    vector<double> theta(pts.size(), 0.0);
-    for (size_t i = 1; i < pts.size(); ++i) {
-        double dx = pts[i].x - pts[i - 1].x;
-        double dy = pts[i].y - pts[i - 1].y;
-        theta[i] = atan2(dy, dx);
-    }
-    // 首点方向用第一段方向代替
-    theta[0] = theta[1];
-
-    vector<double> angleChange(pts.size(), 0.0);
-    for (size_t i = 1; i < pts.size() - 1; ++i) {
-        double delta = theta[i + 1] - theta[i];
-        // 归一化到 [-π, π]
-        delta = fmod(delta + M_PI, 2 * M_PI) - M_PI;
-        angleChange[i] = fabs(delta);
-    }
-
-    // ---------- 3. 识别整体方向（首尾点方向） ----------
-    double dxTotal = pts.back().x - pts.front().x;
-    double dyTotal = pts.back().y - pts.front().y;
-    double thetaTotal = atan2(dyTotal, dxTotal);
-
-    // ---------- 4. 定义基础曲线形状（基于整体方向） ----------
-    auto baseCurve = [&](double t) -> double {
-        // t 从 0 到 1
-        const double eps = 1e-6;
-        if (totalLen < 20.0) {   // 短笔画（如点）
-            // 中间重，两端轻：使用 sin(π * t) 曲线
-            return sin(M_PI * t);
-        }
-
-        // 根据整体方向选择曲线形态
-        double absTheta = fabs(thetaTotal);
-        // 横 / 竖（两端重，中间轻）：1 - sin(π * t) 再调整范围
-        if (absTheta < M_PI / 6 || fabs(M_PI - absTheta) < M_PI / 6) {
-            // 横或提
-            double val = 1.0 - sin(M_PI * t);
-            // 映射到 [0.2, 0.9] 范围，避免笔尖完全离纸
-            return 0.2 + 0.7 * val;
-        }
-        if (fabs(absTheta - M_PI / 2) < M_PI / 6) {
-            // 竖
-            double val = 1.0 - sin(M_PI * t);
-            return 0.2 + 0.7 * val;
-        }
-        if (thetaTotal > M_PI / 2 && thetaTotal < M_PI) {
-            // 撇（中间重）
-            double val = sin(M_PI * t);
-            return 0.2 + 0.8 * val;
-        }
-        if (thetaTotal > -M_PI / 2 && thetaTotal < 0) {
-            // 捺（中间重）
-            double val = sin(M_PI * t);
-            return 0.2 + 0.8 * val;
-        }
-        // 默认：中间重
-        double val = sin(M_PI * t);
-        return 0.2 + 0.8 * val;
+    // 辅助函数：根据比例查找索引（内部使用）
+    auto indexByRatio = [&](double ratio) -> size_t {
+        if (ratio <= 0.0) return 0;
+        if (ratio >= 1.0) return pts.size() - 1;
+        double target = ratio * totalLen;
+        size_t idx = 0;
+        while (idx + 1 < dist.size() && dist[idx + 1] < target) ++idx;
+        return idx;
     };
 
-    // ---------- 5. 生成基础 Z 值 ----------
-    vector<double> zVals(pts.size());
-    for (size_t i = 0; i < pts.size(); ++i) {
-        double t = dist[i] / totalLen;
-        zVals[i] = baseCurve(t);
+    // 2. 初始化所有点 Z 为中间值，然后根据子笔画类型逐段覆盖
+    vector<double> zVals(pts.size(), 0.5); // 默认中间深度
+
+    for (const auto& sub : stroke.subStrokes) {
+        size_t startIdx = indexByRatio(sub.startRatio);
+        size_t endIdx   = indexByRatio(sub.endRatio);
+        if (endIdx <= startIdx) continue;
+
+        double segLen = dist[endIdx] - dist[startIdx];
+        if (segLen < 1e-6) continue;
+
+        // 根据子笔画类型生成该段内的 Z 曲线
+        for (size_t i = startIdx; i <= endIdx; ++i) {
+            double t = (dist[i] - dist[startIdx]) / segLen; // 0..1
+            double zVal = 0.5;
+
+            if (sub.type == "h" || sub.type == "sh") {
+                // 横、竖：两端重（0.8~1.0），中间轻（0.3~0.5）
+                zVal = 0.3 + 0.7 * (1.0 - sin(M_PI * t));
+            } else if (sub.type == "p" || sub.type == "n") {
+                // 撇、捺：起笔重（0.9），收笔轻（0.2）
+                zVal = 0.9 - 0.9 * t;
+                //COUT << sub.type << " " << zVal << endl;
+            } else if (sub.type == "g" || sub.type == "t") {
+                // 钩、提：保持中重，末端急收
+                if (t < 0.8) zVal = 0.7;
+                else zVal = 0.7 - 0.7 * (t - 0.8) / 0.2;
+            } else if (sub.type == "d") {
+                // 点：中间重，四周轻
+                zVal = 0.4 + 0.6 * sin(M_PI * t);
+            } else {
+                // 未知类型：保持平稳
+                zVal = 0.6;
+            }
+
+            // 限制范围
+            zVals[i] = max(0.0, min(1.0, zVal));
+            //COUT << i << "," << t << "," << zVals[i] << endl;
+        }
     }
 
-    // ---------- 6. 转折点增强 ----------
-    const double ANGLE_THRESH = 0.8;      // 弧度，约 45°
-    const int ENHANCE_RADIUS = 2;         // 影响半径（点数）
-    const double ENHANCE_AMOUNT = 0.3;    // 增强量（归一化值，0~1）
-    for (size_t i = 1; i + 1 < pts.size(); ++i) {
-        if (angleChange[i] > ANGLE_THRESH) {
-            int start = max(0, (int)i - ENHANCE_RADIUS);
-            int end = min((int)pts.size() - 1, (int)i + ENHANCE_RADIUS);
-            for (int j = start; j <= end; ++j) {
-                double factor = 1.0 - fabs(j - (int)i) / ENHANCE_RADIUS;
-                zVals[j] += ENHANCE_AMOUNT * factor;
-                zVals[j] = max(0.0, min(1.0, zVals[j]));
+    // 3. 子笔画交界处额外加重（折笔、顿笔）
+    for (size_t i = 0; i + 1 < stroke.subStrokes.size(); ++i) {
+        const auto& sub1 = stroke.subStrokes[i];
+        const auto& sub2 = stroke.subStrokes[i + 1];
+        size_t junctionIdx = indexByRatio(sub1.endRatio);
+        
+        // 影响半径内增加压力
+        int radius = 3;
+        for (int d = -radius; d <= radius; ++d) {
+            int idx = static_cast<int>(junctionIdx) + d;
+            if (idx >= 0 && idx < (int)pts.size()) {
+                double factor = 1.0 - fabs(d) / (radius + 1.0);
+                zVals[idx] = min(1.0, zVals[idx] + 0.25 * factor);
             }
         }
     }
 
-    // ---------- 7. 末端钩增强 ----------
-    if (pts.size() >= 3) {
-        int last = pts.size() - 1;
-        double dxLast = pts[last].x - pts[last - 1].x;
-        double dyLast = pts[last].y - pts[last - 1].y;
-        double lenLast = sqrt(dxLast * dxLast + dyLast * dyLast);
-        if (lenLast < totalLen / 5.0) {
-            // 最后一段较短，检查方向变化
-            double dxPrev = pts[last - 1].x - pts[last - 2].x;
-            double dyPrev = pts[last - 1].y - pts[last - 2].y;
-            double thetaPrev = atan2(dyPrev, dxPrev);
-            double thetaLast = atan2(dyLast, dxLast);
-            double delta = fmod(thetaLast - thetaPrev + M_PI, 2 * M_PI) - M_PI;
-            if (fabs(delta) > 60.0 * M_PI / 180.0) {
-                // 钩：末端增加下压
-                int start = max(0, last - 3);
-                for (int j = start; j <= last; ++j) {
-                    double factor = 1.0 - (last - j) / 3.0;
-                    zVals[j] += 0.3 * factor;
-                    zVals[j] = min(1.0, zVals[j]);
-                }
-            }
-        }
-    }
-
-    // ---------- 8. 写回点集，并映射到 [zMin, zMax] ----------
+    // 4. 写回点集，并映射到 [zMin, zMax]
     for (size_t i = 0; i < pts.size(); ++i) {
         double zNorm = max(0.0, min(1.0, zVals[i]));
         pts[i].z = smoothCfg.zMin + (smoothCfg.zMax - smoothCfg.zMin) * zNorm;
@@ -751,7 +920,7 @@ void hanzi::inferStrokeType(hanzi::Bi_Hua& stroke){
     // 基于累积角度变化的分段
     vector<size_t> keyPoints = {0};
     double cumAngle = 0.0;
-    const double ANGLE_THRESH = 0.8; // 累积阈值
+    const double ANGLE_THRESH = 1.0; // 累积阈值
     for (size_t i = 1; i < n; ++i) {
         double delta = fmod(smoothTheta[i] - smoothTheta[i-1] + M_PI, 2*M_PI) - M_PI;
         cumAngle += fabs(delta);
@@ -804,7 +973,7 @@ void hanzi::inferStrokeType(hanzi::Bi_Hua& stroke){
         // 如果子笔画长度小于总长度的5%，忽略，除非是末尾的钩
         bool isLastSubstroke = (k + 1 == keyPoints.size() - 1);
         if (f.totalLen < totalLen * 0.05 && !(isLastSubstroke && subType == "g")) continue;
-        
+
         SubStroke sub;
         sub.type = subType;
         sub.startIndex = start;
@@ -818,6 +987,13 @@ void hanzi::inferStrokeType(hanzi::Bi_Hua& stroke){
             sub.dir = {0.0, 0.0, 0.0};
         } else {
             sub.dir = {dx / mag, dy / mag, 0.0};
+        }
+        // #sym:inferStrokeType 更新子笔画起始和末尾骨架点信息
+        if (!stroke.originPoints.empty()) {
+            sub.originStartIdx = start < stroke.originPoints.size() ? start : 0;
+            sub.originEndIdx = end < stroke.originPoints.size() ? end : stroke.originPoints.size() - 1;
+            sub.originStart = stroke.originPoints[sub.originStartIdx];
+            sub.originEnd = stroke.originPoints[sub.originEndIdx];
         }
         subStrokes.push_back(sub);
     }
@@ -845,12 +1021,16 @@ void hanzi::inferStrokeType(hanzi::Bi_Hua& stroke){
     stroke.subStrokes = std::move(mergedSubStrokes);
 
     // 返回子笔画类型向量
-    COUT << "Result: ";
+    // COUT << "Result: ";
+    // for (size_t i = 0; i < stroke.subStrokes.size(); ++i) {
+    //     if (i > 0) COUT << "-";
+    //     stroke.type = stroke.type + "-" + stroke.subStrokes[i].type;
+    //     COUT << stroke.subStrokes[i].type;
+    // }
+    // COUT << endl;
     for (size_t i = 0; i < stroke.subStrokes.size(); ++i) {
-        if (i > 0) COUT << "-";
-        COUT << stroke.subStrokes[i].type;
+        stroke.type = stroke.type + "-" + stroke.subStrokes[i].type;
     }
-    COUT << endl;
 }
 
 void hanzi::smooth(Bi_Hua& stroke){
@@ -994,46 +1174,134 @@ void hanzi::addBackstroke(Bi_Hua& stroke) {
     }
 }
 
-void hanzi::updateSubStrokeIndices(Bi_Hua& stroke) {
-    if (stroke.p.empty() || stroke.subStrokes.empty()) return;
+void hanzi::addStrokeLeadIn(Bi_Hua& stroke, size_t pointCount) {
+    auto& pts = stroke.p;
+    if (pts.size() < 2 || pointCount == 0) return;
 
-    // 计算当前密集点集的累积距离
-    vector<double> dist(stroke.p.size(), 0.0);
-    for (size_t i = 1; i < stroke.p.size(); ++i) {
-        double dx = stroke.p[i].x - stroke.p[i-1].x;
-        double dy = stroke.p[i].y - stroke.p[i-1].y;
-        dist[i] = dist[i-1] + sqrt(dx*dx + dy*dy);
+    double strokeLen = 0.0;
+    for (size_t i = 1; i < pts.size(); ++i) {
+        const double dx = pts[i].x - pts[i - 1].x;
+        const double dy = pts[i].y - pts[i - 1].y;
+        strokeLen += sqrt(dx * dx + dy * dy);
     }
-    double totalLen = dist.back();
+    if (strokeLen < smoothCfg.strokeLeadInMinLen) return;
+
+    const size_t leadCount = min(pointCount, pts.size() - 1);
+    vector<Point> leadPts;
+    leadPts.reserve(leadCount);
+
+    for (size_t i = leadCount; i >= 1; --i) {
+        Point leadPt = pts[i];
+        leadPts.push_back(leadPt);
+        if (i == 1) break;
+    }
+
+    if (leadPts.empty()) return;
+
+    const double targetZ = pts.front().z;
+    const size_t insertedCount = leadPts.size();
+    for (size_t i = 0; i < insertedCount; ++i) {
+        const double t = static_cast<double>(i + 1) / static_cast<double>(insertedCount + 1);
+        leadPts[i].z = targetZ * sin(0.5 * M_PI * t);
+    }
+
+    pts.insert(pts.begin(), leadPts.begin(), leadPts.end());
+
+    if (stroke.subStrokes.empty()) return;
+
+    for (auto& sub : stroke.subStrokes) {
+        sub.startIndex = min(sub.startIndex + insertedCount, pts.size() - 1);
+        sub.endIndex = min(sub.endIndex + insertedCount, pts.size() - 1);
+    }
+
+    vector<double> dist(pts.size(), 0.0);
+    for (size_t i = 1; i < pts.size(); ++i) {
+        const double dx = pts[i].x - pts[i - 1].x;
+        const double dy = pts[i].y - pts[i - 1].y;
+        dist[i] = dist[i - 1] + sqrt(dx * dx + dy * dy);
+    }
+
+    const double totalLen = dist.back();
     if (totalLen < 1e-9) return;
 
-    // 用比例定位最近的索引
     for (auto& sub : stroke.subStrokes) {
-        double targetStart = sub.startRatio * totalLen;
-        double targetEnd   = sub.endRatio   * totalLen;
+        sub.startRatio = dist[sub.startIndex] / totalLen;
+        sub.endRatio = dist[sub.endIndex] / totalLen;
+    }
+}
 
-        // 二分或线性查找起始索引
-        size_t startIdx = 0;
-        while (startIdx < dist.size() && dist[startIdx] < targetStart) ++startIdx;
-        if (startIdx > 0 && fabs(dist[startIdx] - targetStart) > fabs(dist[startIdx-1] - targetStart))
-            startIdx = startIdx - 1;
-        sub.startIndex = min(startIdx, stroke.p.size() - 1);
+void hanzi::updateSubStrokeIndices(Bi_Hua& stroke) {
+    if (stroke.p.empty() || stroke.subStrokes.empty() || stroke.originPoints.empty()) return;
 
-        // 结束索引
-        size_t endIdx = 0;
-        while (endIdx < dist.size() && dist[endIdx] < targetEnd) ++endIdx;
-        if (endIdx > 0 && fabs(dist[endIdx] - targetEnd) > fabs(dist[endIdx-1] - targetEnd))
-            endIdx = endIdx - 1;
-        sub.endIndex = min(endIdx, stroke.p.size() - 1);
+    for (auto& sub : stroke.subStrokes) {
+        size_t minStartIdx = 0, minEndIdx = 0;
+        double minStartDist = 1e18, minEndDist = 1e18;
+        for (size_t i = 0; i < stroke.p.size(); ++i) {
+            double d1 = pow(stroke.p[i].x - sub.originStart.x, 2) + pow(stroke.p[i].y - sub.originStart.y, 2);
+            double d2 = pow(stroke.p[i].x - sub.originEnd.x, 2) + pow(stroke.p[i].y - sub.originEnd.y, 2);
+            if (d1 < minStartDist) { minStartDist = d1; minStartIdx = i; }
+            if (d2 < minEndDist) { minEndDist = d2; minEndIdx = i; }
+        }
+        sub.startIndex = minStartIdx;
+        sub.endIndex = minEndIdx;
     }
 }
 
 void hanzi::personalizeStroke(Bi_Hua& stroke) {
+    // 插入后需同步更新子笔画的startRatio/endRatio等
+    updateSubStrokeIndices(stroke);
+
     if (stroke.p.size() < 2 || stroke.subStrokes.empty()) return;
+
+    // #sym:personalizeStroke 横开头顿挫感处理
+    // 只对第一个子笔画为横（h）时处理
+    if (!stroke.subStrokes.empty() && stroke.subStrokes[0].type == "h") {
+        auto& pts = stroke.p;
+        size_t n = pts.size();
+        if (n >= 2) {
+            // 取横的起点方向
+            size_t hStart = stroke.subStrokes[0].startIndex;
+            size_t hNext = hStart + 1;
+            if (hNext >= pts.size()) hNext = pts.size() - 1;
+            double dx = pts[hNext].x - pts[hStart].x;
+            double dy = pts[hNext].y - pts[hStart].y;
+            double mag = sqrt(dx*dx + dy*dy);
+            if (mag > 1e-6) {
+                // 顿挫点参数
+                double pressLen = 50.0; // 顿挫段长度（物理长度，可调）
+                double pressDepth = smoothCfg.zMax; // 顿挫最大下压
+                double releaseDepth = smoothCfg.zMax - (smoothCfg.zMax-smoothCfg.zMin)*0.4; // 顿挫后抬起
+                // 横的反方向（左上）单位向量
+                double nx = -dx / mag;
+                double ny = -dy / mag;
+                // 构造左上到原起点的插值点
+                std::vector<Point> newPts;
+                size_t insertCount = 4; // 插值点数
+                for (size_t k = 0; k < insertCount; ++k) {
+                    double t = double(k) / (insertCount-1);
+                    double px = pts[hStart].x + nx * pressLen * (1.0 - t);
+                    double py = pts[hStart].y + ny * pressLen * (1.0 - t);
+                    // z轴缓变：使用余弦插值或三次贝塞尔插值
+                    // 余弦插值（慢起慢收）
+                    double zNorm = 0.5 * (1 - cos(M_PI * t)); // 0~1
+                    double pz = pressDepth * (1.0 - zNorm) + releaseDepth * zNorm;
+                    newPts.push_back({px, py, pz});
+                }
+                // 顺序为左上到原起点，写笔顺为新点到原起点
+                pts.insert(pts.begin(), newPts.begin(), newPts.end());
+                size_t added = newPts.size();
+                // 更新所有子笔画的startIndex/endIndex
+                for (auto& sub : stroke.subStrokes) {
+                    sub.startIndex = std::min(sub.startIndex + added, pts.size()-1);
+                    sub.endIndex = std::min(sub.endIndex + added, pts.size()-1);
+                }
+            }
+        }
+    }
 
     const SubStroke& lastSub = stroke.subStrokes.back();
     //钩提撇捺的笔锋
-    if ((lastSub.type == "g" || lastSub.type == "t" || lastSub.type == "p" || lastSub.type == "n")) {
+    if ((lastSub.type == "g" || lastSub.type == "t" /*|| lastSub.type == "p" || lastSub.type == "n"*/)) {
         vector<double> dist(stroke.p.size(), 0.0);
         for (size_t i = 1; i < stroke.p.size(); ++i) {
             double dx = stroke.p[i].x - stroke.p[i-1].x;
@@ -1075,11 +1343,12 @@ void hanzi::personalizeStroke(Bi_Hua& stroke) {
     }
     
     //h-sh结构的折
-    {
+    {   
         for (size_t i = 0; i + 1 < stroke.subStrokes.size(); ++i) {
+            if(stroke.type == "-h-sh-h-t") break;
             const auto& sub1 = stroke.subStrokes[i];
             const auto& sub2 = stroke.subStrokes[i + 1];
-            if (sub1.type != "h" || sub2.type != "sh") continue;
+            if (!((sub1.type == "h" && sub2.type == "sh") || (sub1.type == "sh" && sub2.type == "h"))) continue;
             if (sub1.endIndex >= stroke.p.size() || sub2.startIndex >= stroke.p.size()) continue;
 
             size_t hEnd = sub1.endIndex;
@@ -1108,13 +1377,11 @@ void hanzi::personalizeStroke(Bi_Hua& stroke) {
 
             Point lastHPt = stroke.p[hEnd];
 
-            // 1. 插入停顿点（同一位置加重）
             Point pausePt = lastHPt;
             pausePt.z = pauseDepth;
             stroke.p.insert(stroke.p.begin() + hEnd + 1, pausePt);
             size_t offset = 1;
 
-            // 2. 插入延伸点
             vector<Point> extendedPts;
             for (size_t k = 1; k <= extendCount; ++k) {
                 Point newPt = lastHPt;
@@ -1126,10 +1393,8 @@ void hanzi::personalizeStroke(Bi_Hua& stroke) {
             stroke.p.insert(stroke.p.begin() + hEnd + 1 + offset, extendedPts.begin(), extendedPts.end());
             offset += extendedPts.size();
 
-            // 更新竖起点索引（因前面插入了点）
             shStart += offset;
 
-            // 3. 在竖起点前插入过渡点
             if (shStart < stroke.p.size() && extendCount > 0) {
                 Point shDir = sub2.dir;
                 if (fabs(shDir.x) > 1e-9 || fabs(shDir.y) > 1e-9) {
@@ -1193,4 +1458,13 @@ void hanzi::addLiftForTipOrHook(Bi_Hua& stroke) {
         double zNorm = 1.0 - sin(M_PI * t / 2.0) * 2.0 ;
         pts[i].z = zNorm;
     }
+}
+
+void hanzi::outPoint(const Bi_Hua& stroke, const std::string& filename) {
+    std::ofstream out(filename, ios::app);
+    if (!out.is_open()) return;
+    for (const auto& pt : stroke.p) {
+        out << pt.x << "," << pt.y << "," << pt.z << "\n";
+    }
+    out.close();
 }

@@ -6,17 +6,25 @@
             "command": "C:\\msys64\\mingw64\\bin\\g++.exe",
             "args": [
                 "-fdiagnostics-color=always",
+                "-std=c++17",
                 "-g",
+                "-I", "C:\\msys64\\mingw64\\include\\opencv4",
+                "-L", "C:\\msys64\\mingw64\\lib",
                 "${file}",
+                "-lopencv_highgui",
+                "-lopencv_imgcodecs",
+                "-lopencv_imgproc",
+                "-lopencv_core",
+                "-lopencv_viz",
+                "-lgdi32",
+                "-lcomctl32",
                 "-o",
-                "${fileDirname}\\${fileBasenameNoExtension}.exe"
+                "${fileDirname}\\${fileBasenameNoExtension}.exe",
             ],
             "options": {
                 "cwd": "${fileDirname}"
             },
-            "problemMatcher": [
-                "$gcc"
-            ],
+            "problemMatcher": ["$gcc"],
             "group": {
                 "kind": "build",
                 "isDefault": true

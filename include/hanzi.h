@@ -31,10 +31,16 @@ private:
         double startRatio;  // 在笔画总长度中的起始位置比例
         double endRatio;    // 在笔画总长度中的结束位置比例
         Point dir;          // 子笔画的方向向量
+        Point originStart;  // 原始骨架点的起点坐标
+        Point originEnd;    // 原始骨架点的终点坐标
+        size_t originStartIdx = 0; // 原始骨架点的起点下标
+        size_t originEndIdx = 0;   // 原始骨架点的终点下标
     };
     struct Bi_Hua{
         std::vector<Point> p;
         vector<SubStroke> subStrokes;  // 子笔画列表
+        std::string type;
+        std::vector<Point> originPoints; // 原始骨架点集
     };
     struct HanZi{
         vector<Bi_Hua> bi_hua_;
@@ -59,6 +65,7 @@ private:
 
         int fadeInPointCount = 0;       // 渐入点数（0 表示禁用）
         double fadeInLength = 0.0;      // 渐入长度（mm，优先于点数，0 表示使用点数）
+        double strokeLeadInMinLen = 20.0;
     } smoothCfg;
 
     double scale=1.0;
@@ -74,10 +81,17 @@ private:
     static void inferStrokeType(Bi_Hua& stroke); // 识别笔画类型（如:h/sh/p/n），同时填充子笔画信息
     void smooth(Bi_Hua& stroke);//滤波平滑
     void addBackstroke(Bi_Hua& stroke); // 添加回笔    void personalizeStroke(Bi_Hua& stroke); // 个性化业画（添加提笔和z章调整）    void addLiftForTipOrHook(Bi_Hua& stroke); // 为提或钩添加提笔
+    void addStrokeLeadIn(Bi_Hua& stroke, size_t pointCount = 3);
     void extendStrokeEnd(Bi_Hua& stroke, double length, int numPoints = 3);
     void personalizeStroke(Bi_Hua& stroke);
     void addLiftForTipOrHook(Bi_Hua& stroke);
     void updateSubStrokeIndices(Bi_Hua& stroke);
+    void outPoint(const Bi_Hua& stroke, const std::string& filename);
+
+    #ifdef DEBUG
+    void print3D(const hanzi::Bi_Hua& stroke, const std::string& windowName = "Stroke 3D");
+    #endif
+
 public:
     //初始构造函数
     explicit hanzi(int option = 1);
@@ -93,7 +107,6 @@ public:
     void printAllWord();
     void printSingleWord(string name);
 };
-
 
 
 #endif // HANZI_H

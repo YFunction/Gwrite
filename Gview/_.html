@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>画板轨迹提取 - 翻转X坐标输出 | 背景区分</title>
+    <style>
+        * {
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            background: #8b9eb0;  /* 外部最外层背景，与框架区分 */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+            margin: 0;
+            padding: 20px;
+        }
+
+        .container {
+            background: #eef2fa;  /* 框架背景色 (浅灰蓝) */
+            border-radius: 36px;
+            box-shadow: 0 25px 40px -12px rgba(0, 0, 0, 0.35);
+            padding: 28px 32px 32px 32px;
+            transition: all 0.2s;
+            border: 1px solid rgba(255,255,255,0.3);
+        }
+
+        h2 {
+            margin: 0 0 16px 0;
+            font-size: 1.7rem;
+            font-weight: 600;
+            color: #1e2a3e;
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+
+        h2 small {
+            font-size: 0.8rem;
+            font-weight: normal;
+            background: #ffffffcc;
+            backdrop-filter: blur(2px);
+            padding: 5px 14px;
+            border-radius: 40px;
+            color: #1e4a76;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        }
+
+        .canvas-wrapper {
+            border-radius: 24px;
+            background: #d9e2ef;  /* 画布外围衬色 */
+            padding: 10px;
+            box-shadow: inset 0 0 0 1px rgba(0,0,0,0.05), 0 12px 22px -8px rgba(0,0,0,0.2);
+        }
+
+        canvas {
+            display: block;
+            border-radius: 20px;
+            background-color: #fef7e8;  /* 画布米色背景，温暖且与框架区分 */
+            cursor: crosshair;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+            width: 1000px;
+            height: 1000px;
+        }
+
+        .toolbar {
+            margin-top: 28px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 16px;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 14px;
+            flex-wrap: wrap;
+        }
+
+        button {
+            background: #ffffffdd;
+            backdrop-filter: blur(4px);
+            border: 1px solid #cbdbe2;
+            padding: 8px 20px;
+            border-radius: 60px;
+            font-weight: 600;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            color: #1f3a4b;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        }
+
+        button i {
+            font-style: normal;
+            font-weight: 700;
+            font-size: 1.1rem;
+        }
+
+        button.primary {
+            background: #2c6e9e;
+            border-color: #2c6e9e;
+            color: white;
+            box-shadow: 0 3px 8px rgba(44, 110, 158, 0.25);
+        }
+
+        button.primary:hover {
+            background: #1f567d;
+            transform: translateY(-1px);
+        }
+
+        button:hover {
+            background: #ffffff;
+            border-color: #8f9bb3;
+            transform: translateY(-1px);
+        }
+
+        button:active {
+            transform: translateY(1px);
+        }
+
+        .threshold-control {
+            background: #ffffffcc;
+            backdrop-filter: blur(4px);
+            padding: 6px 18px;
+            border-radius: 60px;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            font-size: 0.85rem;
+            font-weight: 500;
+            border: 1px solid #cdd9ed;
+        }
+
+        .threshold-control span {
+            color: #1e3a5f;
+        }
+
+        input[type="range"] {
+            width: 180px;
+            height: 4px;
+            -webkit-appearance: none;
+            background: #b9c8e6;
+            border-radius: 4px;
+            outline: none;
+        }
+
+        input[type="range"]:focus {
+            outline: none;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 18px;
+            height: 18px;
+            background: #2c6e9e;
+            border-radius: 50%;
+            cursor: pointer;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+            border: 2px solid white;
+        }
+
+        #thresholdValue {
+            font-weight: 700;
+            background: #e9f0f9;
+            padding: 3px 12px;
+            border-radius: 40px;
+            font-family: monospace;
+            min-width: 52px;
+            display: inline-block;
+            text-align: center;
+            color: #0c4a6e;
+        }
+
+        .info-panel {
+            margin-top: 20px;
+            font-size: 0.75rem;
+            color: #1f3f5c;
+            background: #ffffffcc;
+            backdrop-filter: blur(4px);
+            padding: 8px 20px;
+            border-radius: 40px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 12px;
+            border: 1px solid #ffffff;
+        }
+
+        .badge {
+            font-family: monospace;
+            background: #e2edf9;
+            padding: 4px 14px;
+            border-radius: 32px;
+            font-weight: 500;
+        }
+
+        hr {
+            margin: 14px 0 0 0;
+            border: none;
+            border-top: 1px solid #cddcf0;
+        }
+
+        .note {
+            font-size: 0.7rem;
+            color: #2c6285;
+            margin-top: 14px;
+            text-align: center;
+            background: #ffffffaa;
+            border-radius: 28px;
+            padding: 6px 12px;
+            display: inline-block;
+            width: auto;
+        }
+    </style>
+</head>
+<body>
+<div>
+    <div class="container">
+        <h2>
+            🎨 轨迹提取画板 
+            <small>✧ 输出X轴翻转 (1000-x) ✧</small>
+        </h2>
+        <div class="canvas-wrapper">
+            <canvas id="drawCanvas" width="1000" height="1000"></canvas>
+        </div>
+
+        <div class="toolbar">
+            <div class="btn-group">
+                <button id="clearBtn" title="清空所有笔画">🧽 清空画板</button>
+                <button id="extractBtn" class="primary">📎 提取骨架点 & 保存JSON (X翻转)</button>
+                <button id="loadExampleBtn">📂 加载示例 (f.json风格)</button>
+            </div>
+            <div class="threshold-control">
+                <span>📏 距离间隔阈值</span>
+                <input type="range" id="distanceThreshold" min="3" max="40" step="1" value="15">
+                <span id="thresholdValue">15 px</span>
+            </div>
+        </div>
+
+        <div class="info-panel">
+            <div>✍️ 鼠标/手指绘制 | 自动分笔画 | 骨架点基于距离采样</div>
+            <div class="badge" id="statsInfo">📌 笔画数: 0 | 总点数: 0</div>
+        </div>
+        <div class="note">
+            💡 输出JSON时，所有点的X坐标将执行 <strong>1000 - x</strong> 水平镜像翻转。<br>
+            🎨 画布米色背景 + 浅灰网格，外部框架为灰蓝色，清晰区分。
+        </div>
+        <hr />
+    </div>
+</div>
+
+<script>
+    (function(){
+        // ---------- DOM 元素 ----------
+        const canvas = document.getElementById('drawCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // 数据模型
+        let strokes = [];          // 已完成笔画: 每个元素是点数组 [[x,y], ...]
+        let currentStroke = [];    // 当前正在绘制的笔画点集
+        let isDrawing = false;
+        let lastPoint = null;
+        
+        // 阈值滑块
+        const thresholdSlider = document.getElementById('distanceThreshold');
+        const thresholdValueSpan = document.getElementById('thresholdValue');
+        let distanceThreshold = 15;
+        
+        // UI 统计
+        const statsInfo = document.getElementById('statsInfo');
+        
+        // ---------- 初始化画板背景 (米色底+浅网格) ----------
+        function drawCanvasBackground() {
+            // 底色: 温暖米色 #fef7e8
+            ctx.fillStyle = '#fef7e8';
+            ctx.fillRect(0, 0, 1000, 1000);
+            
+            // 绘制浅灰色网格 (更细致, 视觉参考线)
+            ctx.save();
+            ctx.strokeStyle = '#e2dccd';
+            ctx.lineWidth = 0.7;
+            // 每40px一条细线
+            for(let i = 0; i <= 1000; i += 40) {
+                ctx.beginPath();
+                ctx.moveTo(i, 0);
+                ctx.lineTo(i, 1000);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(0, i);
+                ctx.lineTo(1000, i);
+                ctx.stroke();
+            }
+            // 每200px加粗强调
+            ctx.lineWidth = 1.2;
+            ctx.strokeStyle = '#cfcbbc';
+            for(let i = 0; i <= 1000; i += 200) {
+                ctx.beginPath();
+                ctx.moveTo(i, 0);
+                ctx.lineTo(i, 1000);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(0, i);
+                ctx.lineTo(1000, i);
+                ctx.stroke();
+            }
+            ctx.restore();
+        }
+        
+        // 重绘全部笔画 (基于strokes + currentStroke)
+        function redrawAll() {
+            drawCanvasBackground();  // 先绘制背景和网格
+            
+            // 绘制所有已完成的笔画 (深灰蓝)
+            for(let i = 0; i < strokes.length; i++) {
+                const strokePoints = strokes[i];
+                if(strokePoints.length < 2) {
+                    if(strokePoints.length === 1) {
+                        const p = strokePoints[0];
+                        ctx.beginPath();
+                        ctx.arc(p[0], p[1], 3.5, 0, 2*Math.PI);
+                        ctx.fillStyle = '#2c5a7a';
+                        ctx.fill();
+                    }
+                    continue;
+                }
+                drawPolyline(strokePoints, '#2c5a7a', 3.2);
+            }
+            // 绘制当前正在绘制的笔画 (活泼蓝色)
+            if(currentStroke.length >= 2) {
+                drawPolyline(currentStroke, '#3f8ec7', 3.5);
+            }
+            if(currentStroke.length === 1) {
+                const p = currentStroke[0];
+                ctx.beginPath();
+                ctx.arc(p[0], p[1], 4, 0, 2*Math.PI);
+                ctx.fillStyle = '#3f8ec7';
+                ctx.fill();
+            }
+            updateStatsDisplay();
+        }
+        
+        // 绘制折线辅助函数
+        function drawPolyline(points, color, lineWidth = 2.8) {
+            if(!points || points.length < 2) return;
+            ctx.beginPath();
+            ctx.moveTo(points[0][0], points[0][1]);
+            for(let i = 1; i < points.length; i++) {
+                ctx.lineTo(points[i][0], points[i][1]);
+            }
+            ctx.strokeStyle = color;
+            ctx.lineWidth = lineWidth;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            ctx.stroke();
+        }
+        
+        // 更新统计
+        function updateStatsDisplay() {
+            let totalPoints = 0;
+            for(let s of strokes) totalPoints += s.length;
+            totalPoints += currentStroke.length;
+            statsInfo.innerHTML = `✍️ 笔画数: ${strokes.length} | 总原始点数: ${totalPoints}`;
+        }
+        
+        // ---------- 核心: 基于距离间隔提取骨架点 (保留起点/终点, 点间距 >= 阈值) ----------
+        function extractSkeletonByDistance(points, threshold) {
+            if(!points || points.length === 0) return [];
+            if(points.length === 1) return [points[0]];
+            if(points.length === 2) return [points[0], points[1]];
+            
+            const skeleton = [points[0]];
+            let lastKept = points[0];
+            
+            for(let i = 1; i < points.length - 1; i++) {
+                const current = points[i];
+                const dist = Math.hypot(current[0] - lastKept[0], current[1] - lastKept[1]);
+                if(dist >= threshold) {
+                    skeleton.push(current);
+                    lastKept = current;
+                }
+            }
+            // 终点必须保留
+            const lastRaw = points[points.length - 1];
+            if(skeleton.length === 0) {
+                skeleton.push(lastRaw);
+            } else {
+                const lastDist = Math.hypot(lastRaw[0] - lastKept[0], lastRaw[1] - lastKept[1]);
+                if(lastDist >= 1e-4) {
+                    skeleton.push(lastRaw);
+                } else if(skeleton[skeleton.length-1] !== lastRaw) {
+                    skeleton.push(lastRaw);
+                }
+            }
+            // 去重相邻相同点
+            const uniqueSkeleton = [];
+            for(let i = 0; i < skeleton.length; i++) {
+                if(i === 0 || (skeleton[i][0] !== skeleton[i-1][0] || skeleton[i][1] !== skeleton[i-1][1])) {
+                    uniqueSkeleton.push(skeleton[i]);
+                }
+            }
+            return uniqueSkeleton;
+        }
+        
+        // 提取所有笔画骨架 (未翻转的原始骨架)
+        function extractAllSkeletonStrokes(threshold) {
+            const allStrokes = [];
+            for(let i = 0; i < strokes.length; i++) {
+                const rawPoints = strokes[i];
+                if(rawPoints.length === 0) continue;
+                const skeletonPoints = extractSkeletonByDistance(rawPoints, threshold);
+                if(skeletonPoints.length > 0) allStrokes.push(skeletonPoints);
+            }
+            if(currentStroke.length > 0) {
+                const currSkeleton = extractSkeletonByDistance(currentStroke, threshold);
+                if(currSkeleton.length > 0) allStrokes.push(currSkeleton);
+            }
+            return allStrokes;
+        }
+        
+        // 导出 JSON 文件 —— 关键修改：对X坐标进行镜像 (1000 - x)
+        function exportToJSON() {
+            const threshold = distanceThreshold;
+            const skeletonStrokes = extractAllSkeletonStrokes(threshold);
+            
+            if(skeletonStrokes.length === 0) {
+                alert("当前画板没有任何笔画轨迹，请先绘制内容再提取！");
+                return;
+            }
+            
+            // 深拷贝并翻转X坐标: 1000 - x (水平镜像)
+            const flippedStrokes = skeletonStrokes.map(stroke => 
+                stroke.map(point => [1000 - point[0], point[1]])
+            );
+            
+            const outputData = {
+                medians: flippedStrokes   // 最终输出符合要求: x' = 1000 - x
+            };
+            
+            const jsonStr = JSON.stringify(outputData, null, 2);
+            const blob = new Blob([jsonStr], {type: 'application/json'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `trajectory_flippedX_${new Date().toISOString().slice(0,19).replace(/:/g, '-')}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            
+            let totalPoints = flippedStrokes.reduce((sum, stroke) => sum + stroke.length, 0);
+            alert(`✅ 提取并翻转X坐标成功！\n笔画数: ${flippedStrokes.length}\n骨架总点数: ${totalPoints}\n阈值: ${threshold}px\n所有X坐标已执行 1000-x 变换。`);
+        }
+        
+        // ---------- 加载示例数据 (f.json 中的 medians) ----------
+        function loadExampleFromJSON() {
+            const exampleData = {
+                "medians": [
+                    [
+                        [180, 50], [220, 80], [210, 150], [170, 200],
+                        [170, 700], [150, 850], [130, 880]
+                    ],
+                    [
+                        [140, 160], [200, 160]
+                    ]
+                ]
+            };
+            
+            strokes = [];
+            currentStroke = [];
+            isDrawing = false;
+            lastPoint = null;
+            
+            for(let i = 0; i < exampleData.medians.length; i++) {
+                const strokePoints = exampleData.medians[i].map(p => [p[0], p[1]]);
+                if(strokePoints.length > 0) strokes.push(strokePoints);
+            }
+            redrawAll();
+            updateStatsDisplay();
+            alert(`📂 示例加载成功！包含 ${strokes.length} 个笔画。\n注意：输出时X坐标会自动翻转(1000-x)，画板显示保持原始坐标。`);
+        }
+        
+        // 清空全部
+        function clearAll() {
+            strokes = [];
+            currentStroke = [];
+            isDrawing = false;
+            lastPoint = null;
+            redrawAll();
+            updateStatsDisplay();
+        }
+        
+        // ---------- 画板事件 (支持鼠标+触摸) ----------
+        function getCanvasCoords(e) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            let clientX, clientY;
+            if(e.touches) {
+                if(e.touches.length === 0) return null;
+                clientX = e.touches[0].clientX;
+                clientY = e.touches[0].clientY;
+            } else {
+                clientX = e.clientX;
+                clientY = e.clientY;
+            }
+            let canvasX = (clientX - rect.left) * scaleX;
+            let canvasY = (clientY - rect.top) * scaleY;
+            canvasX = Math.min(Math.max(0, canvasX), 1000);
+            canvasY = Math.min(Math.max(0, canvasY), 1000);
+            return [canvasX, canvasY];
+        }
+        
+        function startStroke(e) {
+            e.preventDefault();
+            const coord = getCanvasCoords(e);
+            if(!coord) return;
+            isDrawing = true;
+            currentStroke = [[coord[0], coord[1]]];
+            lastPoint = coord;
+            redrawAll();
+        }
+        
+        function drawStroke(e) {
+            if(!isDrawing) return;
+            e.preventDefault();
+            const coord = getCanvasCoords(e);
+            if(!coord) return;
+            const [x, y] = coord;
+            if(lastPoint && Math.hypot(x - lastPoint[0], y - lastPoint[1]) < 0.8) return;
+            currentStroke.push([x, y]);
+            lastPoint = [x, y];
+            redrawAll();
+        }
+        
+        function endStroke(e) {
+            if(!isDrawing) {
+                isDrawing = false;
+                lastPoint = null;
+                return;
+            }
+            e.preventDefault();
+            if(currentStroke.length > 0) {
+                strokes.push([...currentStroke]);
+            }
+            currentStroke = [];
+            isDrawing = false;
+            lastPoint = null;
+            redrawAll();
+            updateStatsDisplay();
+        }
+        
+        function cancelStroke(e) {
+            if(isDrawing) {
+                currentStroke = [];
+                isDrawing = false;
+                lastPoint = null;
+                redrawAll();
+                updateStatsDisplay();
+            }
+        }
+        
+        function bindEvents() {
+            canvas.addEventListener('mousedown', startStroke);
+            window.addEventListener('mousemove', (e) => {
+                if(isDrawing) {
+                    const inside = canvas.contains(e.target);
+                    if(inside) drawStroke(e);
+                    else if(isDrawing) endStroke(e);
+                }
+            });
+            window.addEventListener('mouseup', endStroke);
+            canvas.addEventListener('touchstart', startStroke, {passive: false});
+            canvas.addEventListener('touchmove', drawStroke, {passive: false});
+            canvas.addEventListener('touchend', endStroke);
+            canvas.addEventListener('touchcancel', cancelStroke);
+        }
+        
+        function initThreshold() {
+            const update = () => {
+                distanceThreshold = parseInt(thresholdSlider.value, 10);
+                thresholdValueSpan.innerText = distanceThreshold + ' px';
+            };
+            thresholdSlider.addEventListener('input', update);
+            update();
+        }
+        
+        // 辅助: 确保canvas尺寸稳定
+        function ensureCanvasSize() {
+            canvas.style.width = '1000px';
+            canvas.style.height = '1000px';
+        }
+        
+        function init() {
+            ensureCanvasSize();
+            bindEvents();
+            initThreshold();
+            clearAll();   // 初始化干净画板 + 背景绘制
+            document.getElementById('clearBtn').addEventListener('click', clearAll);
+            document.getElementById('extractBtn').addEventListener('click', exportToJSON);
+            document.getElementById('loadExampleBtn').addEventListener('click', loadExampleFromJSON);
+            console.log("画板已启动 | X轴翻转输出 (1000-x) | 米色背景+网格 | 距离采样提取骨架");
+        }
+        
+        init();
+    })();
+</script>
+</body>
+</html>
