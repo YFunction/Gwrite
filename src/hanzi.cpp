@@ -425,8 +425,8 @@ bool hanzi::loadCharData(const string& ch){
     HanZi h;
     COUT << ch << ":\n";
 
-    ofstream out_;
-    out_.open("point.csv",ios::app|ios::out);
+    //ofstream out_;
+    //out_.open("point.csv",ios::app|ios::out);
     
     for(const auto& stroke : j["medians"]){
         Bi_Hua s;
@@ -482,7 +482,7 @@ bool hanzi::loadCharData(const string& ch){
         smooth(s);
         h.bi_hua_.push_back(s);
     }
-    out_.close();
+    //out_.close();
     mp[ch] = std::move(h);
     return true;
 }
@@ -611,7 +611,7 @@ void hanzi::printGCode(string name,
             vector<Point> absPoints;
             for (size_t i = 0; i < pts.size(); ++i) {
                 double x = xOrigin + (pts[i].x * scaleForChar + xOffset);
-                double y = yOrigin + (pts[i].y * scaleForChar + yOffset);
+                double y = yOrigin + ((pts[i].y) * scaleForChar + yOffset);
                 double z = z_up + (z_down - z_up) * pts[i].z;
                 absPoints.push_back({x, y, z});
             }
