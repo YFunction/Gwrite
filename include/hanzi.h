@@ -8,21 +8,24 @@
 #include<map>
 #include<iomanip>
 #include<cmath>
-
-#ifdef _WIN32
-    //#include<windows.h>
-#endif
+#include <chrono>
+#include <thread>
+#include <mutex>
+#include <tuple>
+#include <functional>
 
 #include"../include/json.hpp"
 
 using namespace std;
 using json=nlohmann::json;
 
+// ============ hanzi 类声明 ============
 class hanzi {
 public:
     struct Point{
         double x,y,z;
     };
+
 private:
     struct SubStroke {
         string type;
@@ -104,6 +107,17 @@ public:
                 double Size=100.0,        // 每个字占用的正方形边长（mm）
                 bool rowMajor=true,       // true: 以行优先写，false: 以列优先写
                 string path="./G.gcode"); // 输出文件
+    
+    // -------- 新增：串口实时控制方法 --------
+    void writeWithSerial(const std::string& name,
+                         const std::string& port,
+                         double Rate,
+                         double x0, double y0,
+                         double z_up, double z_down,
+                         int n = 1, int m = 1,
+                         double Size = 100.0,
+                         bool rowMajor = true);
+    
     void printAllWord();
     void printSingleWord(string name);
 };
