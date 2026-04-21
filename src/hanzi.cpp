@@ -587,23 +587,6 @@ void hanzi::printGCode(string name,
         double xOffset = -minX * scaleForChar;
         double yOffset = -minY * scaleForChar;
 
-        // for(const auto& bh: hz->bi_hua_){
-        //     const auto& firstPoint = bh.p.front();
-        //     double x = xOrigin + (firstPoint.x * scaleForChar + xOffset);
-        //     double y = yOrigin + (firstPoint.y * scaleForChar + yOffset);
-        //     double z = z_up + (z_down - z_up) * firstPoint.z;
-        //     gout<<"G0 X"<<x<<" Y"<<y<<"\n";
-        //     gout<<"G1 X"<<x<<" Y"<<y<<" Z"<<z<<" F"<<Rate<<"\n";
-        //     for(int i=1;i<bh.p.size();i++){
-        //         x = xOrigin + (bh.p[i].x * scaleForChar + xOffset);
-        //         y = yOrigin + (bh.p[i].y * scaleForChar + yOffset);
-        //         z = z_up + (z_down - z_up) * bh.p[i].z;
-        //         gout<<"G1 X"<<x<<" Y"<<y<<" Z"<<z<<"\n";
-        //     }
-        //     gout<<"G0 Z"<<z_up<<"\n";
-        //     gout<<"G0 Z"<<z_up+30<<"\n\n";
-        // }
-
         for (auto bh : hz->bi_hua_) { // 注意这里要用auto bh副本，避免影响原始数据
             const auto& pts = bh.p;
             if (pts.empty()) continue;
@@ -671,10 +654,10 @@ void hanzi::printGCode(string name,
             }
 
             gout << "G0 Z" << z_up << "\n";
-            gout << "G0 Z" << z_up + 30 << "\n\n";
+            gout << "G0 Z" << z_up + 10 << "\n\n";
         }
     }
-    gout<<"G0 Z"<<z_up<<"\n";
+    gout<<"G0 Z"<<z_up + 10<<"\n";
     gout<<"M30\n";
     gout.close();
     //COUT<<"Generated "<<name<<" ("<<count<<" chars) at "<<path<<" which begin at "<<"("<<x0<<","<<y0<<")"<<endl;
