@@ -72,7 +72,8 @@ void showMenu() {
 }
 
 int main() {
-
+    system("chcp 65001");
+    SetConsoleOutputCP(CP_UTF8);
     hanzi hz(1);
     std::string portName = "COM3";
     std::unique_ptr<DexArmController> arm = nullptr;
